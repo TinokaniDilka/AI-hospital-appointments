@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../services/api';
 import { Calendar, Clock, User, FileText, Heart, Plus, Search, ChevronRight, CheckCircle, AlertCircle, Activity, Stethoscope, Phone, Mail } from 'lucide-react';
 
 export default function PatientDashboard({ user }) {
@@ -14,6 +15,15 @@ export default function PatientDashboard({ user }) {
   });
   const [doctors, setDoctors] = useState([]);
   const [availableSlots, setAvailableSlots] = useState([]);
+  const [remainingSlots, setRemainingSlots] = useState(0);
+  const [profileForm, setProfileForm] = useState({
+    fullName: user?.fullName || '',
+    email: user?.email || '',
+    phoneNumber: user?.phone || user?.phoneNumber || '',
+    dob: user?.dob || '',
+    gender: user?.gender || '',
+    bloodGroup: user?.bloodGroup || ''
+  });
 
   useEffect(() => {
     const fetchAppointments = async () => {
@@ -22,7 +32,7 @@ export default function PatientDashboard({ user }) {
       setLoading(true);
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch(`http://localhost:8080/api/v1/appointments?patientId=${user.patientId}`, {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments?patientId=${user.patientId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -43,14 +53,41 @@ export default function PatientDashboard({ user }) {
       }
     };
 
+    const fetchProfile = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/patients/me`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setProfileForm({
+            fullName: data.fullName || user?.fullName || '',
+            email: data.email || user?.email || '',
+            phoneNumber: data.phoneNumber || data.phone || data.emergencyContact || user?.phone || '',
+            dob: data.dob || '',
+            gender: data.gender || '',
+            bloodGroup: data.bloodGroup || ''
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch profile:', error);
+      }
+    };
+
     fetchAppointments();
+    fetchProfile();
   }, [user?.patientId]);
 
   useEffect(() => {
     const fetchDoctors = async () => {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch('http://localhost:8080/api/v1/doctors', {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/doctors`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -75,7 +112,9 @@ export default function PatientDashboard({ user }) {
     try {
       const token = localStorage.getItem('token');
       console.log('Fetching slots for doctorId:', doctorId, 'date:', date);
-      const response = await fetch(`http://localhost:8080/api/v1/appointments/slots?doctorId=${doctorId}&date=${date}`, {
+      
+      // Fetch available slots
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments/slots?doctorId=${doctorId}&date=${date}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -92,6 +131,22 @@ export default function PatientDashboard({ user }) {
         console.error('Error:', errorText);
         setAvailableSlots([]);
       }
+
+      // Fetch remaining slots count
+      try {
+        const capacityResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/capacity/remaining?doctorId=${doctorId}&date=${date}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (capacityResponse.ok) {
+          const capacityData = await capacityResponse.json();
+          setRemainingSlots(capacityData.remainingSlots || 0);
+        }
+      } catch (err) {
+        console.error('Failed to fetch remaining slots:', err);
+        setRemainingSlots(0);
+      }
     } catch (error) {
       console.error('Failed to fetch slots:', error);
       setAvailableSlots([]);
@@ -106,7 +161,7 @@ export default function PatientDashboard({ user }) {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8080/api/v1/appointments/book', {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments/book`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -137,21 +192,45 @@ export default function PatientDashboard({ user }) {
     }
   };
 
+  const handleCancelAppointment = async (aptId) => {
+    if (!window.confirm('Are you sure you want to cancel this appointment?')) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments/${aptId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        alert('Appointment cancelled successfully!');
+        if (user?.patientId) {
+          const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments?patientId=${user.patientId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) setAppointments(await res.json());
+        }
+      } else {
+        alert('Failed to cancel appointment');
+      }
+    } catch (error) {
+      console.error('Failed to cancel appointment:', error);
+      alert('Failed to cancel appointment');
+    }
+  };
+
   const handleSaveProfile = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8080/api/v1/patients/me', {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/patients/me`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          fullName: user.fullName,
-          dob: user.dob,
-          gender: user.gender,
-          bloodGroup: user.bloodGroup
-        })
+        body: JSON.stringify(profileForm)
       });
 
       if (response.ok) {
@@ -417,15 +496,20 @@ export default function PatientDashboard({ user }) {
                     </div>
                     <div>
                       <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.25rem' }}>{apt.doctorName}</h3>
-                      <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '0.5rem' }}>{apt.department}</p>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.85rem', color: '#64748b' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                          <Clock size={16} />
-                          {apt.date} • {apt.timeSlot}
-                        </span>
+                      <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '0.5rem' }}>{apt.departmentName || apt.department}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Calendar size={16} style={{ color: '#64748b' }} />
+                        <span style={{ color: '#64748b', fontSize: '0.85rem' }}>{apt.appointmentDate}</span>
+                        <Clock size={16} style={{ color: '#64748b', marginLeft: '0.5rem' }} />
+                        <span style={{ color: '#64748b', fontSize: '0.85rem' }}>{apt.timeSlot}</span>
                       </div>
-                      <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.5rem' }}>Reason: {apt.reason}</p>
+                      {apt.status === 'WAITLISTED' && apt.queuePosition > 0 && (
+                        <p style={{ color: '#f59e0b', fontSize: '0.85rem', marginTop: '0.5rem', fontWeight: 600 }}>
+                          Queue Position: #{apt.queuePosition}
+                        </p>
+                      )}
                     </div>
+                    <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.5rem' }}>Reason: {apt.reason}</p>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <span style={{
@@ -437,7 +521,26 @@ export default function PatientDashboard({ user }) {
                     }}>
                       {apt.status}
                     </span>
-                    <ChevronRight style={{ color: '#64748b' }} size={20} />
+                    {apt.status !== 'CANCELLED' && apt.status !== 'COMPLETED' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelAppointment(apt.id || apt.appointmentId);
+                        }}
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.1)',
+                          color: '#ef4444',
+                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          padding: '0.375rem 0.75rem',
+                          borderRadius: '8px',
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -538,7 +641,8 @@ export default function PatientDashboard({ user }) {
               <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Full Name</label>
               <input
                 type="text"
-                defaultValue={user?.fullName || ''}
+                value={profileForm.fullName}
+                onChange={(e) => setProfileForm({ ...profileForm, fullName: e.target.value })}
                 style={{
                   width: '100%',
                   padding: '0.75rem 1rem',
@@ -553,10 +657,12 @@ export default function PatientDashboard({ user }) {
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Email</label>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Email (Gmail)</label>
               <input
                 type="email"
-                defaultValue={user?.email || ''}
+                value={profileForm.email}
+                onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                placeholder="patient@gmail.com"
                 style={{
                   width: '100%',
                   padding: '0.75rem 1rem',
@@ -574,7 +680,9 @@ export default function PatientDashboard({ user }) {
               <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Phone Number</label>
               <input
                 type="tel"
-                defaultValue="+1-555-0199"
+                value={profileForm.phoneNumber}
+                onChange={(e) => setProfileForm({ ...profileForm, phoneNumber: e.target.value })}
+                placeholder="+1-555-0199"
                 style={{
                   width: '100%',
                   padding: '0.75rem 1rem',
@@ -592,7 +700,8 @@ export default function PatientDashboard({ user }) {
               <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Date of Birth</label>
               <input
                 type="date"
-                defaultValue="1988-04-12"
+                value={profileForm.dob}
+                onChange={(e) => setProfileForm({ ...profileForm, dob: e.target.value })}
                 style={{
                   width: '100%',
                   padding: '0.75rem 1rem',
@@ -607,26 +716,52 @@ export default function PatientDashboard({ user }) {
               />
             </div>
             <div>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Gender</label>
+              <select
+                value={profileForm.gender}
+                onChange={(e) => setProfileForm({ ...profileForm, gender: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem 1rem',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '10px',
+                  color: '#0f172a',
+                  fontSize: '0.95rem',
+                  outline: 'none',
+                  transition: 'all 0.2s'
+                }}>
+                <option value="">Select Gender</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div>
               <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Blood Group</label>
-              <select style={{
-                width: '100%',
-                padding: '0.75rem 1rem',
-                background: '#f1f5f9',
-                border: '1px solid #cbd5e1',
-                borderRadius: '10px',
-                color: '#0f172a',
-                fontSize: '0.95rem',
-                outline: 'none',
-                transition: 'all 0.2s'
-              }}>
-                <option>O+</option>
-                <option>A+</option>
-                <option>B+</option>
-                <option>AB+</option>
-                <option>O-</option>
-                <option>A-</option>
-                <option>B-</option>
-                <option>AB-</option>
+              <select
+                value={profileForm.bloodGroup}
+                onChange={(e) => setProfileForm({ ...profileForm, bloodGroup: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem 1rem',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '10px',
+                  color: '#0f172a',
+                  fontSize: '0.95rem',
+                  outline: 'none',
+                  transition: 'all 0.2s'
+                }}>
+                <option value="">Select Blood Group</option>
+                <option value="O+">O+</option>
+                <option value="A+">A+</option>
+                <option value="B+">B+</option>
+                <option value="AB+">AB+</option>
+                <option value="O-">O-</option>
+                <option value="A-">A-</option>
+                <option value="B-">B-</option>
+                <option value="AB-">AB-</option>
               </select>
             </div>
           </div>
@@ -752,6 +887,32 @@ export default function PatientDashboard({ user }) {
                   }}
                 />
               </div>
+
+              {bookingForm.doctorId && bookingForm.date && (
+                <div style={{
+                  background: remainingSlots > 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                  border: `1px solid ${remainingSlots > 0 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                  borderRadius: '10px',
+                  padding: '0.75rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}>
+                  {remainingSlots > 0 ? (
+                    <>
+                      <span style={{ color: '#10b981', fontSize: '0.85rem', fontWeight: 600 }}>
+                        {remainingSlots} slots remaining
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: '#f59e0b', fontSize: '0.85rem', fontWeight: 600 }}>
+                        No slots available - you will be waitlisted
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Select Time Slot</label>
