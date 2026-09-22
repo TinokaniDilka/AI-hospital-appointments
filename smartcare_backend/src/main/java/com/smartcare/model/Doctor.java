@@ -17,6 +17,9 @@ public class Doctor {
     private String id;
     private String userId;
     private String doctorName;
+    private String email;
+    @org.springframework.data.annotation.Transient
+    private String password;
     private String specialization;
     private String departmentId;
     private String departmentName;
@@ -26,6 +29,8 @@ public class Doctor {
     private double consultationFee;
     @Builder.Default
     private int avgConsultationMinutes = 15;
+    @Builder.Default
+    private int maxPatientsPerDay = 25;
     private String qualification;
     private String experienceYears;
     private boolean active;

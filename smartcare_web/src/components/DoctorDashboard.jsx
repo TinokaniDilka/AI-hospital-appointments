@@ -90,11 +90,11 @@ export default function DoctorDashboard({ user }) {
   };
 
   const items = queueState.items || [];
-  const currentServing = items.find(i => i.status === 'NOW_SERVING');
-  const nextWaiting = items.find(i => i.status === 'WAITING' || i.status === 'APPROACHING');
+  const currentServing = items.find(i => i.status === 'IN_PROGRESS');
+  const nextWaiting = items.find(i => i.status === 'CONFIRMED' || i.status === 'WAITING_FOR_SCHEDULING');
 
   const totalCount = items.length;
-  const waitingCount = items.filter(i => i.status === 'WAITING' || i.status === 'APPROACHING').length;
+  const waitingCount = items.filter(i => i.status === 'CONFIRMED' || i.status === 'WAITING_FOR_SCHEDULING').length;
   const completedCount = items.filter(i => i.status === 'COMPLETED').length;
   const noShowCount = items.filter(i => i.status === 'NO_SHOW').length;
 
@@ -148,7 +148,7 @@ export default function DoctorDashboard({ user }) {
       if (response.ok) {
         const updatedQueue = await response.json();
         setQueueState(updatedQueue);
-        const serving = updatedQueue.items.find(i => i.status === 'NOW_SERVING');
+        const serving = updatedQueue.items.find(i => i.status === 'IN_PROGRESS');
         if (serving) {
           showNotification(`Called Queue #${serving.queueNumber} (${serving.patientName}) to Consultation Room.`);
         } else {
@@ -267,7 +267,7 @@ export default function DoctorDashboard({ user }) {
 
   const filteredItems = items.filter(item => {
     if (filterStatus === 'ALL') return true;
-    if (filterStatus === 'WAITING') return item.status === 'WAITING' || item.status === 'APPROACHING';
+    if (filterStatus === 'WAITING') return item.status === 'CONFIRMED' || item.status === 'WAITING_FOR_SCHEDULING';
     return item.status === filterStatus;
   });
 
@@ -463,7 +463,7 @@ export default function DoctorDashboard({ user }) {
 
                 {/* Filter Pills */}
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  {['ALL', 'WAITING', 'NOW_SERVING', 'COMPLETED', 'NO_SHOW'].map(st => (
+                  {['ALL', 'WAITING', 'IN_PROGRESS', 'COMPLETED', 'NO_SHOW'].map(st => (
                     <button
                       key={st}
                       onClick={() => setFilterStatus(st)}
@@ -504,18 +504,18 @@ export default function DoctorDashboard({ user }) {
                         key={item.appointmentId}
                         style={{
                           borderBottom: '1px solid var(--border-color)',
-                          background: item.status === 'NOW_SERVING' ? 'rgba(6, 182, 212, 0.06)' : 'transparent'
+                          background: item.status === 'IN_PROGRESS' ? 'rgba(6, 182, 212, 0.06)' : 'transparent'
                         }}
                       >
-                        <td style={{ padding: '12px 10px', fontWeight: 800, fontSize: '1rem', color: item.status === 'NOW_SERVING' ? '#38bdf8' : 'inherit' }}>
+                        <td style={{ padding: '12px 10px', fontWeight: 800, fontSize: '1rem', color: item.status === 'IN_PROGRESS' ? '#38bdf8' : 'inherit' }}>
                           #{item.queueNumber}
                         </td>
                         <td style={{ padding: '12px 10px', fontWeight: 600 }}>{item.patientName}</td>
                         <td style={{ padding: '12px 10px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>{item.appointmentId}</td>
                         <td style={{ padding: '12px 10px' }}>
-                          {item.status === 'NOW_SERVING' && <span className="badge badge-now-serving">NOW SERVING</span>}
-                          {item.status === 'APPROACHING' && <span className="badge badge-approaching">APPROACHING</span>}
-                          {item.status === 'WAITING' && <span className="badge badge-waiting">WAITING</span>}
+                          {item.status === 'IN_PROGRESS' && <span className="badge badge-now-serving">IN PROGRESS</span>}
+                          {item.status === 'CONFIRMED' && <span className="badge badge-approaching">CONFIRMED</span>}
+                          {(item.status === 'WAITING_FOR_SCHEDULING' || item.status === 'WAITLISTED') && <span className="badge badge-waiting">WAITING</span>}
                           {item.status === 'COMPLETED' && <span className="badge badge-completed">COMPLETED</span>}
                           {item.status === 'NO_SHOW' && <span className="badge badge-noshow">NO SHOW</span>}
                         </td>

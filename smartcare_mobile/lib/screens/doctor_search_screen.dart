@@ -15,6 +15,8 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
   List<DoctorModel> filteredDoctors = [];
   String selectedDept = 'All';
   String selectedBranch = 'All';
+  DateTime? selectedDate;
+  String selectedAvailability = 'All';
   final _searchCtrl = TextEditingController();
   bool isLoading = true;
 
@@ -41,9 +43,39 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
             doc.specialization.toLowerCase().contains(query);
         final matchesDept = selectedDept == 'All' || doc.departmentName == selectedDept;
         final matchesBranch = selectedBranch == 'All' || doc.branchName == selectedBranch;
-        return matchesQuery && matchesDept && matchesBranch;
+        final matchesAvailability = selectedAvailability == 'All' ||
+            (selectedAvailability == 'Available Today' && doc.active) ||
+            (selectedAvailability == 'Available Tomorrow' && doc.active);
+        return matchesQuery && matchesDept && matchesBranch && matchesAvailability;
       }).toList();
     });
+  }
+
+  Future<void> _selectDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 30)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Color(0xFF2563EB),
+              onPrimary: Colors.white,
+              surface: Color(0xFF131E3A),
+              onSurface: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        selectedDate = picked;
+      });
+    }
   }
 
   @override
@@ -106,6 +138,94 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
                       );
                     }).toList(),
                   ),
+                ),
+                const SizedBox(height: 12),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: ['All', 'Main Hospital', 'Downtown Branch', 'West Wing'].map((branch) {
+                      final isSel = selectedBranch == branch;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(branch),
+                          selected: isSel,
+                          selectedColor: const Color(0xFF06B6D4),
+                          backgroundColor: const Color(0xFF0B1329),
+                          labelStyle: TextStyle(
+                            color: isSel ? Colors.white : const Color(0xFF94A3B8),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                          onSelected: (val) {
+                            setState(() {
+                              selectedBranch = branch;
+                              _filter();
+                            });
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: _selectDate,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0B1329),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withOpacity(0.08)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.calendar_today, color: Color(0xFF64748B), size: 20),
+                              const SizedBox(width: 12),
+                              Text(
+                                selectedDate != null
+                                    ? '${selectedDate!.day}/${selectedDate!.month}/${selectedDate!.year}'
+                                    : 'Select Date',
+                                style: const TextStyle(color: Colors.white, fontSize: 14),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: selectedAvailability,
+                        dropdownColor: const Color(0xFF131E3A),
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: const Color(0xFF0B1329),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        items: ['All', 'Available Today', 'Available Tomorrow'].map((availability) {
+                          return DropdownMenuItem(
+                            value: availability,
+                            child: Text(availability),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            selectedAvailability = value!;
+                            _filter();
+                          });
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

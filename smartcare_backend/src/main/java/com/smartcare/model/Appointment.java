@@ -28,12 +28,23 @@ public class Appointment {
     private String departmentName;
     private String appointmentDate; // YYYY-MM-DD
     private String timeSlot; // "10:20 - 10:40"
-    private String status; // BOOKED, IN_QUEUE, NOW_SERVING, COMPLETED, CANCELLED, NO_SHOW
-    private int queueNumber;
+    private AppointmentStatus status;
+    private int queuePosition; // Position in waitlist
+    private int scheduledSlotNumber; // Assigned slot number for confirmed appointments
     @Builder.Default
     private boolean isPriority = false;
     private String priorityReason;
     private String cancellationReason;
     @Builder.Default
+    private String paymentStatus = "UNPAID";
+    @Builder.Default
+    private double amountPaid = 0.0;
+    @Builder.Default
     private Instant createdAt = Instant.now();
+    @Builder.Default
+    private Instant scheduledAt = null;
+    @Builder.Default
+    private Instant confirmedAt = null;
+    @Builder.Default
+    private Instant completedAt = null;
 }

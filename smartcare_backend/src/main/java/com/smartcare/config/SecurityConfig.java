@@ -48,36 +48,36 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/auth/register/admin").hasRole("ADMIN")
 
                 // Hospitals/Branches/Departments — GETs are public, mutations are admin-only
-                .requestMatchers(HttpMethod.GET, "/api/v1/hospitals/**", "/api/v1/branches/**", "/api/v1/departments/**").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/v1/hospitals/**", "/api/v1/branches/**", "/api/v1/departments/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/hospitals/**", "/api/v1/branches/**", "/api/v1/departments/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/v1/hospitals/**", "/api/v1/branches/**", "/api/v1/departments/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.GET, "/api/v1/hospitals", "/api/v1/hospitals/**", "/api/v1/branches", "/api/v1/branches/**", "/api/v1/departments", "/api/v1/departments/**").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/hospitals", "/api/v1/hospitals/**", "/api/v1/branches", "/api/v1/branches/**", "/api/v1/departments", "/api/v1/departments/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/v1/hospitals", "/api/v1/hospitals/**", "/api/v1/branches", "/api/v1/branches/**", "/api/v1/departments", "/api/v1/departments/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/hospitals", "/api/v1/hospitals/**", "/api/v1/branches", "/api/v1/branches/**", "/api/v1/departments", "/api/v1/departments/**").hasRole("ADMIN")
 
                 // Doctors — GETs need only authentication, mutations are admin/staff
-                .requestMatchers(HttpMethod.GET, "/api/v1/doctors/**", "/api/v1/schedules/**").authenticated()
-                .requestMatchers(HttpMethod.POST, "/api/v1/doctors/**").hasAnyRole("ADMIN", "STAFF")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/doctors/**").hasAnyRole("ADMIN", "STAFF")
-                .requestMatchers(HttpMethod.DELETE, "/api/v1/doctors/**").hasAnyRole("ADMIN", "STAFF")
+                .requestMatchers(HttpMethod.GET, "/api/v1/doctors", "/api/v1/doctors/**", "/api/v1/schedules", "/api/v1/schedules/**").authenticated()
+                .requestMatchers(HttpMethod.POST, "/api/v1/doctors", "/api/v1/doctors/**").hasAnyRole("ADMIN", "STAFF")
+                .requestMatchers(HttpMethod.PUT, "/api/v1/doctors", "/api/v1/doctors/**").hasAnyRole("ADMIN", "STAFF")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/doctors", "/api/v1/doctors/**").hasAnyRole("ADMIN", "STAFF")
                 // Schedule updates — doctors can update their own, admins can update any
-                .requestMatchers(HttpMethod.POST, "/api/v1/schedules/**").hasAnyRole("DOCTOR", "ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/schedules/**").hasAnyRole("DOCTOR", "ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/v1/schedules", "/api/v1/schedules/**").hasAnyRole("DOCTOR", "ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/v1/schedules", "/api/v1/schedules/**").hasAnyRole("DOCTOR", "ADMIN")
 
                 // Queues — GETs are authenticated, mutations are doctor/staff/admin
-                .requestMatchers(HttpMethod.GET, "/api/v1/queues/**").authenticated()
+                .requestMatchers(HttpMethod.GET, "/api/v1/queues", "/api/v1/queues/**").authenticated()
                 .requestMatchers("/api/v1/queues/*/call-next").hasAnyRole("DOCTOR", "STAFF", "ADMIN")
                 .requestMatchers("/api/v1/queues/*/status").hasAnyRole("DOCTOR", "STAFF", "ADMIN")
                 .requestMatchers("/api/v1/queues/*/priority").hasAnyRole("DOCTOR", "STAFF", "ADMIN")
 
                 // Appointments — GETs need authentication, POST booking = patient only
-                .requestMatchers(HttpMethod.GET, "/api/v1/appointments/**").authenticated()
-                .requestMatchers(HttpMethod.POST, "/api/v1/appointments/**").hasAnyRole("PATIENT", "ADMIN")
+                .requestMatchers(HttpMethod.GET, "/api/v1/appointments", "/api/v1/appointments/**").authenticated()
+                .requestMatchers(HttpMethod.POST, "/api/v1/appointments", "/api/v1/appointments/**").hasAnyRole("PATIENT", "ADMIN")
                 // Cancel/reschedule also allowed by admin
-                .requestMatchers(HttpMethod.PUT, "/api/v1/appointments/**").hasAnyRole("PATIENT", "ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/v1/appointments/**").hasAnyRole("PATIENT", "ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/v1/appointments", "/api/v1/appointments/**").hasAnyRole("PATIENT", "ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/appointments", "/api/v1/appointments/**").hasAnyRole("PATIENT", "ADMIN")
 
                 // Patient profile — patient or admin
-                .requestMatchers(HttpMethod.GET, "/api/v1/patients/**").authenticated()
-                .requestMatchers(HttpMethod.PUT, "/api/v1/patients/**").hasAnyRole("PATIENT", "ADMIN")
+                .requestMatchers(HttpMethod.GET, "/api/v1/patients", "/api/v1/patients/**").authenticated()
+                .requestMatchers(HttpMethod.PUT, "/api/v1/patients", "/api/v1/patients/**").hasAnyRole("PATIENT", "ADMIN")
 
                 // AI — predict is authenticated; retrain is admin only
                 .requestMatchers(HttpMethod.POST, "/api/v1/ai/predict-wait-time").authenticated()

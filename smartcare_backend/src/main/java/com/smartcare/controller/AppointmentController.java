@@ -1,16 +1,18 @@
 package com.smartcare.controller;
 
 import com.smartcare.model.Appointment;
+import com.smartcare.model.AppointmentStatus;
 import com.smartcare.repository.AppointmentRepository;
 import com.smartcare.service.AppointmentService;
+import com.smartcare.service.AutomatedSchedulingService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import javax.validation.Valid;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.util.List;
 
 @RestController
@@ -20,6 +22,7 @@ public class AppointmentController {
 
     private final AppointmentService appointmentService;
     private final AppointmentRepository appointmentRepository;
+    private final AutomatedSchedulingService automatedSchedulingService;
 
     @Data
     public static class BookingRequest {
@@ -52,16 +55,18 @@ public class AppointmentController {
     public ResponseEntity<List<Appointment>> getAppointments(
             @RequestParam(required = false) String patientId,
             @RequestParam(required = false) String doctorId,
-            @RequestParam(required = false) String date
+            @RequestParam(required = false) String date,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
     ) {
         if (patientId != null && !patientId.isEmpty()) {
             return ResponseEntity.ok(appointmentRepository.findByPatientId(patientId));
         }
-        if (doctorId != null && !doctorId.isEmpty() && date != null && !date.isEmpty()) {
-            return ResponseEntity.ok(appointmentRepository.findByDoctorIdAndAppointmentDate(doctorId, date));
-        }
         if (doctorId != null && !doctorId.isEmpty()) {
             return ResponseEntity.ok(appointmentRepository.findByDoctorId(doctorId));
+        }
+        if (date != null && !date.isEmpty()) {
+            return ResponseEntity.ok(appointmentRepository.findByAppointmentDate(date));
         }
         return ResponseEntity.ok(appointmentRepository.findAll());
     }
@@ -96,13 +101,58 @@ public class AppointmentController {
         }
     }
 
-    @PostMapping("/{id}/reschedule")
-    public ResponseEntity<?> rescheduleAppointment(@PathVariable String id, @Valid @RequestBody RescheduleRequest req) {
+    @PostMapping("/{id}/pay")
+    public ResponseEntity<?> processPayment(@PathVariable String id) {
         try {
-            Appointment apt = appointmentService.rescheduleAppointment(id, req.getNewDate(), req.getNewTimeSlot());
+            automatedSchedulingService.processAfterPayment(id);
+            Appointment apt = appointmentRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Appointment not found"));
             return ResponseEntity.ok(apt);
-        } catch (IllegalArgumentException e) {
+        } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
+    }
+
+    @PostMapping("/{id}/complete")
+    public ResponseEntity<?> completeAppointment(@PathVariable String id) {
+        try {
+            Appointment apt = appointmentRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Appointment not found"));
+            
+            if (apt.getStatus() != AppointmentStatus.IN_PROGRESS) {
+                return ResponseEntity.badRequest().body("Appointment must be IN_PROGRESS to complete");
+            }
+            
+            apt.setStatus(AppointmentStatus.COMPLETED);
+            Appointment saved = appointmentRepository.save(apt);
+            return ResponseEntity.ok(saved);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PutMapping("/{id}/status")
+    public ResponseEntity<?> updateAppointmentStatus(@PathVariable String id, @RequestBody StatusUpdateRequest req) {
+        if (req.getStatus() == null || req.getStatus().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body("Status is required");
+        }
+        String newStatus = req.getStatus().trim().toUpperCase();
+        return appointmentRepository.findById(id)
+                .or(() -> appointmentRepository.findAll().stream().filter(a -> id.equals(a.getAppointmentId())).findFirst())
+                .map(apt -> {
+                    try {
+                        apt.setStatus(AppointmentStatus.valueOf(newStatus));
+                    } catch (IllegalArgumentException e) {
+                        apt.setStatus(AppointmentStatus.WAITING_FOR_SCHEDULING);
+                    }
+                    Appointment saved = appointmentRepository.save(apt);
+                    return ResponseEntity.ok(saved);
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @Data
+    public static class StatusUpdateRequest {
+        private String status;
     }
 }

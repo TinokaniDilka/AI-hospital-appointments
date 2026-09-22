@@ -56,6 +56,8 @@ public class AuthService {
         Patient patient = Patient.builder()
                 .userId(savedUser.getId())
                 .fullName(fullName)
+                .email(email)
+                .phoneNumber(phone)
                 .dob(dob != null ? dob : "1995-05-15")
                 .gender(gender != null ? gender : "Other")
                 .bloodGroup("O+")

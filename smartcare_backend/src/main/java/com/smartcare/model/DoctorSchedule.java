@@ -23,6 +23,9 @@ public class DoctorSchedule {
     private String endTime;   // "17:00"
     @Builder.Default
     private int slotDurationMinutes = 20;
+    @Builder.Default
+    private int maxPatientsPerDay = 25;
+    private int dailyCapacity; // Maximum patients per day for automated scheduling
     private String breakStartTime; // "13:00"
     private String breakEndTime;   // "14:00"
     private List<String> leaveDates; // ISO format "2026-09-15"

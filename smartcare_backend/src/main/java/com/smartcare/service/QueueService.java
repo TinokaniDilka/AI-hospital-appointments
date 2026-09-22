@@ -1,6 +1,7 @@
 package com.smartcare.service;
 
 import com.smartcare.model.Appointment;
+import com.smartcare.model.AppointmentStatus;
 import com.smartcare.model.Doctor;
 import com.smartcare.model.NotificationLog;
 import com.smartcare.model.QueueState;
@@ -56,9 +57,9 @@ public class QueueService {
                     .appointmentId(apt.getAppointmentId())
                     .patientId(apt.getPatientId())
                     .patientName(apt.getPatientName())
-                    .queueNumber(apt.getQueueNumber())
-                    .position(apt.getQueueNumber())
-                    .status(apt.getStatus() != null ? apt.getStatus() : "WAITING")
+                    .queueNumber(apt.getQueuePosition())
+                    .position(apt.getQueuePosition())
+                    .status(apt.getStatus() != null ? apt.getStatus().name() : "WAITING")
                     .isPriority(apt.isPriority())
                     .build();
             queueState.getItems().add(item);
@@ -203,7 +204,12 @@ public class QueueService {
                 .filter(a -> a.getAppointmentId().equals(appointmentId))
                 .findFirst()
                 .ifPresent(apt -> {
-                    apt.setStatus(status);
+                    try {
+                        apt.setStatus(AppointmentStatus.valueOf(status));
+                    } catch (IllegalArgumentException e) {
+                        // Fallback for old string statuses
+                        apt.setStatus(AppointmentStatus.WAITING_FOR_SCHEDULING);
+                    }
                     appointmentRepository.save(apt);
                 });
     }

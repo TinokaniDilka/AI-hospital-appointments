@@ -61,8 +61,19 @@ public class AppointmentService {
                 sched.getBreakEndTime()
         );
 
-        // Filter out already booked slots
+        // Filter out already booked slots and check doctor's daily patient limit
+        int maxLimit = 25;
+        Optional<Doctor> docOpt = doctorRepository.findById(doctorId);
+        if (docOpt.isPresent() && docOpt.get().getMaxPatientsPerDay() > 0) {
+            maxLimit = docOpt.get().getMaxPatientsPerDay();
+        }
+
         List<Appointment> existingBookings = appointmentRepository.findByDoctorIdAndAppointmentDate(doctorId, dateStr);
+        long activeCount = existingBookings.stream().filter(a -> !"CANCELLED".equals(a.getStatus())).count();
+        if (activeCount >= maxLimit) {
+            return new ArrayList<>(); // Doctor's daily capacity limit reached
+        }
+
         List<String> bookedSlots = existingBookings.stream()
                 .filter(a -> !"CANCELLED".equals(a.getStatus()))
                 .map(Appointment::getTimeSlot)
@@ -96,6 +107,18 @@ public class AppointmentService {
     }
 
     public Appointment bookAppointment(String patientId, String patientName, String doctorId, String dateStr, String timeSlot) {
+        Doctor doc = doctorRepository.findById(doctorId)
+                .orElseThrow(() -> new IllegalArgumentException("Doctor not found: " + doctorId));
+
+        int maxLimit = doc.getMaxPatientsPerDay() > 0 ? doc.getMaxPatientsPerDay() : 25;
+
+        // Enforce maximum daily capacity chosen by the doctor
+        List<Appointment> existingBookings = appointmentRepository.findByDoctorIdAndAppointmentDate(doctorId, dateStr);
+        long activeCount = existingBookings.stream().filter(a -> !"CANCELLED".equals(a.getStatus())).count();
+        if (activeCount >= maxLimit) {
+            throw new IllegalArgumentException("Daily capacity reached (doctor's daily max limit of " + maxLimit + " patients) for " + doc.getDoctorName() + " on " + dateStr + ". Please select another date.");
+        }
+
         // Validate slot availability
         List<Appointment> existing = appointmentRepository.findByDoctorIdAndAppointmentDateAndTimeSlot(doctorId, dateStr, timeSlot);
         boolean isAlreadyBooked = existing.stream().anyMatch(a -> !"CANCELLED".equals(a.getStatus()));
@@ -103,11 +126,7 @@ public class AppointmentService {
             throw new IllegalArgumentException("The selected time slot " + timeSlot + " is already booked.");
         }
 
-        Doctor doc = doctorRepository.findById(doctorId)
-                .orElseThrow(() -> new IllegalArgumentException("Doctor not found: " + doctorId));
-
-        long todayCount = appointmentRepository.countByDoctorIdAndAppointmentDate(doctorId, dateStr);
-        int queueNumber = (int) todayCount + 1;
+        int queueNumber = (int) activeCount + 1;
         String aptId = "APT-" + (10000 + (int)(Math.random() * 89999));
 
         Appointment appointment = Appointment.builder()
@@ -122,8 +141,8 @@ public class AppointmentService {
                 .departmentName(doc.getDepartmentName())
                 .appointmentDate(dateStr)
                 .timeSlot(timeSlot)
-                .status("WAITING")
-                .queueNumber(queueNumber)
+                .status(AppointmentStatus.WAITING_FOR_SCHEDULING)
+                .queuePosition(queueNumber)
                 .isPriority(false)
                 .build();
 
@@ -148,7 +167,7 @@ public class AppointmentService {
     public Appointment cancelAppointment(String id, String reason) {
         Appointment apt = appointmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Appointment not found"));
-        apt.setStatus("CANCELLED");
+        apt.setStatus(AppointmentStatus.CANCELLED);
         apt.setCancellationReason(reason);
         Appointment saved = appointmentRepository.save(apt);
         queueService.setPatientStatus(apt.getDoctorId(), apt.getAppointmentDate(), apt.getAppointmentId(), "CANCELLED");

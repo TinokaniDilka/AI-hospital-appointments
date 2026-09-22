@@ -20,7 +20,10 @@ Start-Process -FilePath $pythonExe -ArgumentList "main.py" -WorkingDirectory "$p
 Write-Host "[2/3] Starting React Web Portal (Vite Dev Server)..." -ForegroundColor Yellow
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm run dev" -WorkingDirectory "$projectRoot\smartcare_web"
 
-Write-Host "[3/3] System Ready!" -ForegroundColor Green
+Write-Host "[3/3] Starting Spring Boot Backend API (Port 8080)..." -ForegroundColor Yellow
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c .\mvnw.cmd spring-boot:run" -WorkingDirectory "$projectRoot\smartcare_backend"
+
+Write-Host "System Ready!" -ForegroundColor Green
 Write-Host "--------------------------------------------------------------------------" -ForegroundColor Gray
 Write-Host "  * Python AI Engine:  http://localhost:8000 (Predict Wait API and Docs)" -ForegroundColor Green
 Write-Host "  * React Web Portal:  http://localhost:5173 (Doctors and Admins)" -ForegroundColor Green

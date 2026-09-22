@@ -2,11 +2,14 @@ package com.smartcare.controller;
 
 import com.smartcare.model.Doctor;
 import com.smartcare.model.DoctorSchedule;
+import com.smartcare.model.User;
 import com.smartcare.repository.DoctorRepository;
 import com.smartcare.repository.DoctorScheduleRepository;
+import com.smartcare.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,6 +22,8 @@ public class DoctorController {
 
     private final DoctorRepository doctorRepository;
     private final DoctorScheduleRepository scheduleRepository;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     // ── Doctor READ endpoints ─────────────────────────────────────────────────
 
@@ -49,6 +54,31 @@ public class DoctorController {
     @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
     public ResponseEntity<Doctor> createDoctor(@RequestBody Doctor doc) {
         doc.setActive(true);
+
+        if (doc.getUserId() == null || doc.getUserId().trim().isEmpty()) {
+            String email = doc.getEmail();
+            if (email == null || email.trim().isEmpty()) {
+                String sanitized = doc.getDoctorName() != null ? doc.getDoctorName().toLowerCase().replaceAll("[^a-z0-9]", "") : "doc" + System.currentTimeMillis();
+                email = sanitized + "@smartcare.com";
+            }
+            String rawPassword = (doc.getPassword() != null && !doc.getPassword().trim().isEmpty()) ? doc.getPassword() : "doctor123";
+
+            final String finalEmail = email;
+            User doctorUser = userRepository.findByEmail(finalEmail).orElseGet(() -> {
+                User newUser = User.builder()
+                        .email(finalEmail)
+                        .password(passwordEncoder.encode(rawPassword))
+                        .fullName(doc.getDoctorName())
+                        .role("ROLE_DOCTOR")
+                        .active(true)
+                        .build();
+                return userRepository.save(newUser);
+            });
+
+            doc.setUserId(doctorUser.getId());
+            doc.setEmail(finalEmail);
+        }
+
         return ResponseEntity.ok(doctorRepository.save(doc));
     }
 
