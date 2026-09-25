@@ -23,6 +23,7 @@ export default function App() {
       localStorage.removeItem('token');
     }
   }
+  
 }, []);
 
   useEffect(() => {
