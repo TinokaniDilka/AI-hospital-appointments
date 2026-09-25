@@ -12,12 +12,18 @@ export default function App() {
 
   // Check for existing session on mount
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    const storedToken = localStorage.getItem('token');
-    if (storedUser && storedToken) {
+  const storedUser = localStorage.getItem('user');
+  const storedToken = localStorage.getItem('token');
+  if (storedUser && storedToken && storedUser !== 'undefined' && storedToken !== 'undefined') {
+    try {
       setUser(JSON.parse(storedUser));
+    } catch (e) {
+      console.error('Failed to parse stored user, clearing session', e);
+      localStorage.removeItem('user');
+      localStorage.removeItem('token');
     }
-  }, []);
+  }
+}, []);
 
   useEffect(() => {
     // Attempt pinging Spring Boot backend
