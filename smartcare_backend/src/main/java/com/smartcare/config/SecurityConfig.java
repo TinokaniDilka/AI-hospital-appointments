@@ -41,7 +41,13 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // Auth endpoints — fully public
-                .requestMatchers("/api/v1/auth/register", "/api/v1/auth/register/doctor", "/api/v1/auth/login").permitAll()
+                .requestMatchers(
+                        "/api/v1/auth/register",
+                        "/api/v1/auth/register/doctor",
+                        "/api/v1/auth/login",
+                        "/api/v1/auth/forgot-password",
+                        "/api/v1/auth/reset-password"
+                ).permitAll()
                 // FCM token registration — any authenticated user
                 .requestMatchers("/api/v1/auth/fcm-token").authenticated()
                 // Admin registration — admin only
