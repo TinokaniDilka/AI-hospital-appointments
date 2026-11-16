@@ -60,6 +60,18 @@ public class AuthController {
         private String fcmToken;
     }
 
+    @Data
+    public static class ForgotPasswordRequest {
+        private String email;
+    }
+
+    @Data
+    public static class ResetPasswordRequest {
+        private String email;
+        private String otp;
+        private String newPassword;
+    }
+
     // ── Patient Registration ──────────────────────────────────────────────────
 
     @PostMapping("/register")
@@ -126,6 +138,29 @@ public class AuthController {
             authService.updateFcmToken(userId, req.getFcmToken());
             return ResponseEntity.ok().body(Map.of("status", "FCM_TOKEN_UPDATED"));
         } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    // ── Forgot / Reset Password ───────────────────────────────────────────────
+
+    @PostMapping("/forgot-password")
+    public ResponseEntity<?> forgotPassword(@RequestBody ForgotPasswordRequest req) {
+        try {
+            String otp = authService.generatePasswordResetOtp(req.getEmail());
+            // In production, send OTP via email. For now, return it in response.
+            return ResponseEntity.ok(Map.of("message", "OTP sent to email", "otp", otp, "email", req.getEmail()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest req) {
+        try {
+            authService.resetPassword(req.getEmail(), req.getOtp(), req.getNewPassword());
+            return ResponseEntity.ok(Map.of("message", "Password reset successful"));
+        } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
     }
