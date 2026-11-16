@@ -127,10 +127,10 @@ public class DataInitializer implements CommandLineRunner {
         // 6. Create Today's Appointments & Seed Queue
         String today = LocalDate.now().toString();
 
-        createAppointment("APT-10001", pat1, doc1, today, "09:00 - 09:20", AppointmentStatus.COMPLETED, 1, false);
-        createAppointment("APT-10002", pat2, doc1, today, "09:20 - 09:40", AppointmentStatus.IN_PROGRESS, 2, false);
-        createAppointment("APT-10003", pat3, doc1, today, "09:40 - 10:00", AppointmentStatus.CONFIRMED, 3, false);
-        createAppointment("APT-10004", pat4, doc1, today, "10:00 - 10:20", AppointmentStatus.WAITLISTED, 4, true);
+        createAppointment("APT-10001", pat1, doc1, today, "09:00 - 09:20", "COMPLETED", 1, false);
+        createAppointment("APT-10002", pat2, doc1, today, "09:20 - 09:40", "NOW_SERVING", 2, false);
+        createAppointment("APT-10003", pat3, doc1, today, "09:40 - 10:00", "APPROACHING", 3, false);
+        createAppointment("APT-10004", pat4, doc1, today, "10:00 - 10:20", "WAITING", 4, true);
 
         queueService.getOrCreateQueueForDoctor(doc1.getId(), today);
 
@@ -201,7 +201,7 @@ public class DataInitializer implements CommandLineRunner {
                 .build());
     }
 
-    private void createAppointment(String aptId, Patient pat, Doctor doc, String date, String timeSlot, AppointmentStatus status, int qNum, boolean isPriority) {
+    private void createAppointment(String aptId, Patient pat, Doctor doc, String date, String timeSlot, String status, int qNum, boolean isPriority) {
         appointmentRepository.save(Appointment.builder()
                 .appointmentId(aptId)
                 .patientId(pat.getId())
@@ -212,10 +212,9 @@ public class DataInitializer implements CommandLineRunner {
                 .branchName(doc.getBranchName())
                 .departmentId(doc.getDepartmentId())
                 .departmentName(doc.getDepartmentName())
-                .appointmentDate(date)
+                .preferredDate(date)
                 .timeSlot(timeSlot)
                 .status(status)
-                .queuePosition(qNum)
                 .isPriority(isPriority)
                 .priorityReason(isPriority ? "Chest pain emergency evaluation" : null)
                 .build());
