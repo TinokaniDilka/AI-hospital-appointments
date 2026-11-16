@@ -6,6 +6,8 @@ import com.smartcare.model.User;
 import com.smartcare.repository.DoctorRepository;
 import com.smartcare.repository.DoctorScheduleRepository;
 import com.smartcare.repository.UserRepository;
+import com.smartcare.service.AppointmentSchedulerService;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -13,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -24,6 +27,7 @@ public class DoctorController {
     private final DoctorScheduleRepository scheduleRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AppointmentSchedulerService appointmentSchedulerService;
 
     // ── Doctor READ endpoints ─────────────────────────────────────────────────
 
@@ -132,6 +136,56 @@ public class DoctorController {
         sched.setDoctorId(doctorId);
         Optional<DoctorSchedule> existing = scheduleRepository.findByDoctorId(doctorId);
         existing.ifPresent(s -> sched.setId(s.getId()));
-        return ResponseEntity.ok(scheduleRepository.save(sched));
+        DoctorSchedule savedSchedule = scheduleRepository.save(sched);
+        
+        // Also update the Doctor model with the same schedule info
+        doctorRepository.findById(doctorId).ifPresent(doctor -> {
+            doctor.setWorkingDays(sched.getWorkingDays());
+            doctor.setStartTime(sched.getStartTime());
+            doctor.setEndTime(sched.getEndTime());
+            doctor.setLeaveDates(sched.getLeaveDates());
+            doctorRepository.save(doctor);
+        });
+        
+        return ResponseEntity.ok(savedSchedule);
+    }
+
+    // ── Doctor Capacity Management ─────────────────────────────────────────────
+
+    @Data
+    public static class CapacityUpdateRequest {
+        private int maxPatientsPerDay;
+    }
+
+    @PutMapping("/doctors/{id}/capacity")
+    @PreAuthorize("hasAnyRole('DOCTOR','ADMIN')")
+    public ResponseEntity<Doctor> updateCapacity(
+            @PathVariable String id,
+            @RequestBody CapacityUpdateRequest request
+    ) {
+        return doctorRepository.findById(id)
+                .map(doctor -> {
+                    int oldCapacity = doctor.getMaxPatientsPerDay();
+                    doctor.setMaxPatientsPerDay(request.getMaxPatientsPerDay());
+                    Doctor saved = doctorRepository.save(doctor);
+                    
+                    // Reschedule appointments if capacity increased
+                    if (request.getMaxPatientsPerDay() > oldCapacity) {
+                        appointmentSchedulerService.rescheduleOnCapacityChange(id, request.getMaxPatientsPerDay());
+                    }
+                    
+                    return ResponseEntity.ok(saved);
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/doctors/{id}/available-slots")
+    public ResponseEntity<Map<String, Integer>> getAvailableSlots(
+            @PathVariable String id,
+            @RequestParam String startDate,
+            @RequestParam String endDate
+    ) {
+        Map<String, Integer> slots = appointmentSchedulerService.getAvailableSlots(id, startDate, endDate);
+        return ResponseEntity.ok(slots);
     }
 }
