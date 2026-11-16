@@ -1,10 +1,10 @@
 package com.smartcare.controller;
 
 import com.smartcare.model.Appointment;
-import com.smartcare.model.AppointmentStatus;
 import com.smartcare.repository.AppointmentRepository;
+import com.smartcare.service.AppointmentSchedulerService;
 import com.smartcare.service.AppointmentService;
-import com.smartcare.service.AutomatedSchedulingService;
+import com.smartcare.service.NotificationService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/appointments")
@@ -22,7 +24,8 @@ public class AppointmentController {
 
     private final AppointmentService appointmentService;
     private final AppointmentRepository appointmentRepository;
-    private final AutomatedSchedulingService automatedSchedulingService;
+    private final AppointmentSchedulerService appointmentSchedulerService;
+    private final NotificationService notificationService;
 
     @Data
     public static class BookingRequest {
@@ -32,10 +35,19 @@ public class AppointmentController {
         private String patientName;
         @NotBlank(message = "Doctor ID is required")
         private String doctorId;
-        @NotBlank(message = "Date is required")
-        private String date;
+        @NotBlank(message = "Preferred date is required")
+        private String preferredDate;
         @NotBlank(message = "Time slot is required")
         private String timeSlot;
+        private String paymentStatus = "PENDING";
+        private double totalAmount = 100.0;
+    }
+
+    @Data
+    public static class PaymentConfirmationRequest {
+        @NotBlank(message = "Appointment ID is required")
+        private String appointmentId;
+        private String paymentMethod;
     }
 
     @Data
@@ -44,11 +56,8 @@ public class AppointmentController {
     }
 
     @Data
-    public static class RescheduleRequest {
-        @NotBlank(message = "New date is required")
-        private String newDate;
-        @NotBlank(message = "New time slot is required")
-        private String newTimeSlot;
+    public static class CompleteConsultationRequest {
+        private String notes;
     }
 
     @GetMapping
@@ -56,6 +65,7 @@ public class AppointmentController {
             @RequestParam(required = false) String patientId,
             @RequestParam(required = false) String doctorId,
             @RequestParam(required = false) String date,
+            @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size
     ) {
@@ -66,7 +76,10 @@ public class AppointmentController {
             return ResponseEntity.ok(appointmentRepository.findByDoctorId(doctorId));
         }
         if (date != null && !date.isEmpty()) {
-            return ResponseEntity.ok(appointmentRepository.findByAppointmentDate(date));
+            return ResponseEntity.ok(appointmentRepository.findByScheduledDate(date));
+        }
+        if (status != null && !status.isEmpty()) {
+            return ResponseEntity.ok(appointmentRepository.findByStatus(status));
         }
         return ResponseEntity.ok(appointmentRepository.findAll());
     }
@@ -82,12 +95,71 @@ public class AppointmentController {
     @PostMapping("/book")
     public ResponseEntity<?> bookAppointment(@Valid @RequestBody BookingRequest req) {
         try {
-            Appointment apt = appointmentService.bookAppointment(
-                    req.getPatientId(), req.getPatientName(), req.getDoctorId(), req.getDate(), req.getTimeSlot());
-            return ResponseEntity.ok(apt);
+            // Create appointment with WAITING_FOR_SCHEDULING status
+            Appointment apt = Appointment.builder()
+                    .appointmentId("APT-" + System.currentTimeMillis())
+                    .patientId(req.getPatientId())
+                    .patientName(req.getPatientName())
+                    .doctorId(req.getDoctorId())
+                    .preferredDate(req.getPreferredDate())
+                    .timeSlot(req.getTimeSlot())
+                    .status("WAITING_FOR_SCHEDULING")
+                    .paymentStatus(req.getPaymentStatus())
+                    .totalAmount(req.getTotalAmount())
+                    .amountPaid(0.0)
+                    .createdAt(Instant.now())
+                    .build();
+            
+            // Add initial status history
+            apt.setStatusHistory(new java.util.ArrayList<>());
+            apt.getStatusHistory().add(new Appointment.StatusHistory(
+                    "WAITING_FOR_SCHEDULING", 
+                    "Appointment booked, waiting for payment confirmation", 
+                    Instant.now(), 
+                    "PATIENT"
+            ));
+            
+            Appointment saved = appointmentRepository.save(apt);
+            
+            // Trigger scheduling immediately to assign time slot and queue number
+            appointmentSchedulerService.scheduleAppointmentsForDoctor(req.getDoctorId());
+            
+            // Fetch the updated appointment with assigned time slot and queue number
+            Appointment updated = appointmentRepository.findById(saved.getId())
+                    .orElse(saved);
+            
+            return ResponseEntity.ok(updated);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
+    }
+
+    @PostMapping("/confirm-payment")
+    public ResponseEntity<?> confirmPayment(@Valid @RequestBody PaymentConfirmationRequest req) {
+        return appointmentRepository.findById(req.getAppointmentId())
+                .or(() -> appointmentRepository.findAll().stream()
+                        .filter(a -> req.getAppointmentId().equals(a.getAppointmentId()))
+                        .findFirst())
+                .map(apt -> {
+                    apt.setPaymentStatus("PAID");
+                    apt.setAmountPaid(apt.getTotalAmount());
+                    // Keep appointment status as WAITING_FOR_SCHEDULING, don't change it
+                    // Don't trigger scheduling - admin will trigger it separately
+                    
+                    // Add status history
+                    if (apt.getStatusHistory() == null) {
+                        apt.setStatusHistory(new java.util.ArrayList<>());
+                    }
+                    apt.getStatusHistory().add(new Appointment.StatusHistory(
+                            "PAYMENT_CONFIRMED", 
+                            "Payment confirmed by admin", 
+                            Instant.now(), 
+                            "ADMIN"
+                    ));
+                    
+                    return ResponseEntity.ok(appointmentRepository.save(apt));
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping("/{id}/cancel")
@@ -95,42 +167,75 @@ public class AppointmentController {
         try {
             String reason = req != null ? req.getReason() : "Patient requested cancellation";
             Appointment apt = appointmentService.cancelAppointment(id, reason);
-            return ResponseEntity.ok(apt);
+            
+            // Update status to CANCELLED
+            apt.setStatus("CANCELLED");
+            apt.setCancellationReason(reason);
+            
+            if (apt.getStatusHistory() == null) {
+                apt.setStatusHistory(new java.util.ArrayList<>());
+            }
+            apt.getStatusHistory().add(new Appointment.StatusHistory(
+                    "CANCELLED", 
+                    reason, 
+                    Instant.now(), 
+                    "PATIENT"
+            ));
+            
+            Appointment saved = appointmentRepository.save(apt);
+            notificationService.sendAppointmentCancelled(saved, reason);
+            
+            // If a confirmed appointment was cancelled, reschedule waitlisted appointments
+            if (apt.getScheduledDate() != null) {
+                appointmentSchedulerService.scheduleAppointmentsForDoctor(apt.getDoctorId());
+            }
+            
+            return ResponseEntity.ok(saved);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
 
-    @PostMapping("/{id}/pay")
-    public ResponseEntity<?> processPayment(@PathVariable String id) {
-        try {
-            automatedSchedulingService.processAfterPayment(id);
-            Appointment apt = appointmentRepository.findById(id)
-                    .orElseThrow(() -> new RuntimeException("Appointment not found"));
-            return ResponseEntity.ok(apt);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
-
     @PostMapping("/{id}/complete")
-    public ResponseEntity<?> completeAppointment(@PathVariable String id) {
-        try {
-            Appointment apt = appointmentRepository.findById(id)
-                    .orElseThrow(() -> new RuntimeException("Appointment not found"));
-            
-            if (apt.getStatus() != AppointmentStatus.IN_PROGRESS) {
-                return ResponseEntity.badRequest().body("Appointment must be IN_PROGRESS to complete");
-            }
-            
-            apt.setStatus(AppointmentStatus.COMPLETED);
-            Appointment saved = appointmentRepository.save(apt);
-            return ResponseEntity.ok(saved);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+    public ResponseEntity<?> completeConsultation(
+            @PathVariable String id,
+            @RequestBody(required = false) CompleteConsultationRequest req
+    ) {
+        return appointmentRepository.findById(id)
+                .or(() -> appointmentRepository.findAll().stream()
+                        .filter(a -> id.equals(a.getAppointmentId()))
+                        .findFirst())
+                .map(apt -> {
+                    apt.setStatus("COMPLETED");
+                    apt.setCompletedAt(Instant.now());
+                    
+                    if (apt.getStatusHistory() == null) {
+                        apt.setStatusHistory(new java.util.ArrayList<>());
+                    }
+                    apt.getStatusHistory().add(new Appointment.StatusHistory(
+                            "COMPLETED", 
+                            req != null && req.getNotes() != null ? req.getNotes() : "Consultation completed", 
+                            Instant.now(), 
+                            "DOCTOR"
+                    ));
+                    
+                    Appointment saved = appointmentRepository.save(apt);
+                    notificationService.sendAppointmentCompleted(saved);
+                    
+                    // Reschedule waitlisted appointments
+                    appointmentSchedulerService.scheduleAppointmentsForDoctor(apt.getDoctorId());
+                    
+                    return ResponseEntity.ok(saved);
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 
+    @Data
+    public static class StatusUpdateRequest {
+        private String status;
+    }
+
+    // Manual status update - restricted to SYSTEM only (for scheduled jobs)
     @PutMapping("/{id}/status")
     public ResponseEntity<?> updateAppointmentStatus(@PathVariable String id, @RequestBody StatusUpdateRequest req) {
         if (req.getStatus() == null || req.getStatus().trim().isEmpty()) {
@@ -140,19 +245,38 @@ public class AppointmentController {
         return appointmentRepository.findById(id)
                 .or(() -> appointmentRepository.findAll().stream().filter(a -> id.equals(a.getAppointmentId())).findFirst())
                 .map(apt -> {
-                    try {
-                        apt.setStatus(AppointmentStatus.valueOf(newStatus));
-                    } catch (IllegalArgumentException e) {
-                        apt.setStatus(AppointmentStatus.WAITING_FOR_SCHEDULING);
+                    apt.setStatus(newStatus);
+                    
+                    if (apt.getStatusHistory() == null) {
+                        apt.setStatusHistory(new java.util.ArrayList<>());
                     }
+                    apt.getStatusHistory().add(new Appointment.StatusHistory(
+                            newStatus, 
+                            "Status updated by system", 
+                            Instant.now(), 
+                            "SYSTEM"
+                    ));
+                    
                     Appointment saved = appointmentRepository.save(apt);
                     return ResponseEntity.ok(saved);
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @Data
-    public static class StatusUpdateRequest {
-        private String status;
+    @GetMapping("/doctors/{id}/daily-counts")
+    public ResponseEntity<Map<String, Integer>> getDailyAppointmentCounts(
+            @PathVariable String id,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate
+    ) {
+        if (startDate == null || startDate.isEmpty()) {
+            startDate = java.time.LocalDate.now().toString();
+        }
+        if (endDate == null || endDate.isEmpty()) {
+            endDate = java.time.LocalDate.now().plusDays(6).toString();
+        }
+        
+        Map<String, Integer> counts = appointmentSchedulerService.getDailyAppointmentCounts(id, startDate, endDate);
+        return ResponseEntity.ok(counts);
     }
 }
