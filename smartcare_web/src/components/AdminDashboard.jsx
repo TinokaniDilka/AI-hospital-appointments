@@ -26,7 +26,9 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
   const [hospitals, setHospitals] = useState([]);
   const [branches, setBranches] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [hospitalSubTab, setHospitalSubTab] = useState('HOSPITALS'); // 'HOSPITALS', 'BRANCHES', 'DEPARTMENTS'
+  const [doctorSchedules, setDoctorSchedules] = useState({});
+  const [doctorPatientCounts, setDoctorPatientCounts] = useState({});
+  const [hospitalSubTab, setHospitalSubTab] = useState('HOSPITALS'); // 'HOSPITALS', 'BRANCHES', 'DEPARTMENTS', 'DOCTORS', 'AVAILABILITY'
   const [showHospitalModal, setShowHospitalModal] = useState(false);
   const [showBranchModal, setShowBranchModal] = useState(false);
   const [showDepartmentModal, setShowDepartmentModal] = useState(false);
@@ -45,6 +47,12 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
     fetchDoctors();
   }, []);
 
+  useEffect(() => {
+    if (doctors.length > 0) {
+      fetchDoctorAvailability();
+    }
+  }, [doctors]);
+
   const fetchDoctors = async () => {
     try {
       const data = await api.getDoctors();
@@ -53,6 +61,47 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
       }
     } catch (error) {
       console.error('Failed to fetch doctors:', error);
+    }
+  };
+
+  const fetchDoctorAvailability = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const schedules = {};
+      const patientCounts = {};
+      
+      for (const doctor of doctors) {
+        // Fetch schedule for each doctor
+        try {
+          const schedResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/schedules/${doctor.id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (schedResponse.ok) {
+            const schedData = await schedResponse.json();
+            schedules[doctor.id] = schedData;
+          }
+        } catch (err) {
+          console.error('Failed to fetch schedule for doctor:', doctor.id);
+        }
+
+        // Fetch patient count for each doctor
+        try {
+          const aptResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments?doctorId=${doctor.id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (aptResponse.ok) {
+            const aptData = await aptResponse.json();
+            patientCounts[doctor.id] = aptData.length || 0;
+          }
+        } catch (err) {
+          console.error('Failed to fetch appointments for doctor:', doctor.id);
+        }
+      }
+      
+      setDoctorSchedules(schedules);
+      setDoctorPatientCounts(patientCounts);
+    } catch (error) {
+      console.error('Failed to fetch doctor availability:', error);
     }
   };
 
@@ -342,6 +391,27 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
     }
   };
 
+  const handleConfirmPayment = async (aptId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments/confirm-payment`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ appointmentId: aptId })
+      });
+      if (response.ok) {
+        fetchAppointments();
+      } else {
+        console.error('Failed to confirm payment');
+      }
+    } catch (err) {
+      console.error('Failed to confirm payment:', err);
+    }
+  };
+
   const handleUpdateAppointmentStatus = async (aptId, newStatus) => {
     try {
       const token = localStorage.getItem('token');
@@ -353,7 +423,11 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
         },
         body: JSON.stringify({ status: newStatus })
       });
-      if (response.ok) fetchAppointments();
+      if (response.ok) {
+        fetchAppointments();
+      } else {
+        console.error('Failed to update appointment status');
+      }
     } catch (err) {
       console.error('Failed to update appointment status:', err);
     }
@@ -699,6 +773,13 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
             >
               <Users size={16} /> Doctors
             </button>
+            <button
+              onClick={() => setHospitalSubTab('AVAILABILITY')}
+              className={hospitalSubTab === 'AVAILABILITY' ? 'btn-primary' : 'btn-secondary'}
+              style={{ fontSize: '0.85rem' }}
+            >
+              <Clock size={16} /> Availability
+            </button>
           </div>
 
           {hospitalSubTab === 'HOSPITALS' && (
@@ -898,6 +979,70 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
               </div>
             </div>
           )}
+
+          {hospitalSubTab === 'AVAILABILITY' && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h4 style={{ fontSize: '1rem', fontWeight: 700 }}>Doctor Availability & Patient Count</h4>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-subtle)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '12px' }}>Doctor Name</th>
+                      <th style={{ padding: '12px' }}>Type/Specialization</th>
+                      <th style={{ padding: '12px' }}>Department</th>
+                      <th style={{ padding: '12px' }}>Working Days</th>
+                      <th style={{ padding: '12px' }}>Shift Time</th>
+                      <th style={{ padding: '12px' }}>Slot Duration</th>
+                      <th style={{ padding: '12px' }}>Patient Count</th>
+                      <th style={{ padding: '12px' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {doctors.map(doc => {
+                      const schedule = doctorSchedules[doc.id] || {};
+                      const patientCount = doctorPatientCounts[doc.id] || 0;
+                      return (
+                        <tr key={doc.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '14px 12px', fontWeight: 700 }}>{doc.doctorName}</td>
+                          <td style={{ padding: '14px 12px', color: 'var(--text-muted)' }}>{doc.specialization}</td>
+                          <td style={{ padding: '14px 12px' }}>{doc.departmentName}</td>
+                          <td style={{ padding: '14px 12px' }}>
+                            {schedule.workingDays && schedule.workingDays.length > 0 
+                              ? schedule.workingDays.join(', ') 
+                              : 'Mon-Fri'}
+                          </td>
+                          <td style={{ padding: '14px 12px' }}>
+                            {schedule.startTime && schedule.endTime 
+                              ? `${schedule.startTime} - ${schedule.endTime}` 
+                              : '09:00 - 17:00'}
+                          </td>
+                          <td style={{ padding: '14px 12px' }}>
+                            {schedule.slotDurationMinutes 
+                              ? `${schedule.slotDurationMinutes} mins` 
+                              : `${doc.avgConsultationMinutes || 20} mins`}
+                          </td>
+                          <td style={{ padding: '14px 12px', fontWeight: 600, color: '#34d399' }}>{patientCount}</td>
+                          <td style={{ padding: '14px 12px' }}>
+                            <span className="badge badge-now-serving">{doc.active ? 'ACTIVE' : 'INACTIVE'}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {doctors.length === 0 && (
+                      <tr>
+                        <td colSpan="8" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No doctors found
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -967,6 +1112,8 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
                   <th style={{ padding: '12px' }}>Date</th>
                   <th style={{ padding: '12px' }}>Time Slot</th>
                   <th style={{ padding: '12px' }}>Department</th>
+                  <th style={{ padding: '12px' }}>Payment Status</th>
+                  <th style={{ padding: '12px' }}>Confirm Payment</th>
                   <th style={{ padding: '12px' }}>Status</th>
                 </tr>
               </thead>
@@ -980,23 +1127,68 @@ export default function AdminDashboard({ doctorsList, auditLogs }) {
                     <td style={{ padding: '14px 12px' }}>{apt.timeSlot}</td>
                     <td style={{ padding: '14px 12px', color: 'var(--text-muted)' }}>{apt.departmentName}</td>
                     <td style={{ padding: '14px 12px' }}>
-                      <span className={`badge ${
-                        apt.status === 'COMPLETED' ? 'badge-completed' : 
-                        apt.status === 'CANCELLED' ? 'badge-noshow' : 
-                        apt.status === 'CONFIRMED' ? 'badge-now-serving' : 
-                        apt.status === 'IN_PROGRESS' ? 'badge-approaching' : 
-                        apt.status === 'WAITLISTED' ? 'badge-waiting' : 
-                        apt.status === 'PAID' ? 'badge-now-serving' : 
-                        'badge-waiting'
-                      }`}>
-                        {apt.status || 'WAITING'}
+                      <span style={{
+                        padding: '4px 10px',
+                        borderRadius: '12px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        background: apt.paymentStatus === 'PAID' ? '#dcfce7' : '#fef3c7',
+                        color: apt.paymentStatus === 'PAID' ? '#166534' : '#92400e'
+                      }}>
+                        {apt.paymentStatus || 'PENDING'}
                       </span>
+                    </td>
+                    <td style={{ padding: '14px 12px' }}>
+                      {apt.paymentStatus !== 'PAID' ? (
+                        <button
+                          onClick={() => handleConfirmPayment(apt.appointmentId || apt.id)}
+                          disabled={apt.paymentStatus === 'PAID'}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            border: 'none',
+                            cursor: apt.paymentStatus === 'PAID' ? 'not-allowed' : 'pointer',
+                            background: apt.paymentStatus === 'PAID' ? '#e5e7eb' : '#10b981',
+                            color: apt.paymentStatus === 'PAID' ? '#6b7280' : '#ffffff',
+                            opacity: apt.paymentStatus === 'PAID' ? 0.5 : 1
+                          }}
+                        >
+                          Confirm
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>✓ Paid</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '14px 12px' }}>
+                      <select
+                        value={apt.status || 'WAITING_FOR_SCHEDULING'}
+                        onChange={(e) => handleUpdateAppointmentStatus(apt.appointmentId || apt.id, e.target.value)}
+                        style={{
+                          padding: '6px 10px',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          border: '1px solid var(--border-color)',
+                          background: 'var(--bg-secondary)',
+                          color: 'var(--text-primary)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="WAITING_FOR_SCHEDULING">WAITING_FOR_SCHEDULING</option>
+                        <option value="CONFIRMED">CONFIRMED</option>
+                        <option value="IN_PROGRESS">IN_PROGRESS</option>
+                        <option value="COMPLETED">COMPLETED</option>
+                        <option value="CANCELLED">CANCELLED</option>
+                        <option value="WAITLISTED">WAITLISTED</option>
+                      </select>
                     </td>
                   </tr>
                 ))}
                 {appointments.length === 0 && (
                   <tr>
-                    <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan="9" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                       No appointments found
                     </td>
                   </tr>
