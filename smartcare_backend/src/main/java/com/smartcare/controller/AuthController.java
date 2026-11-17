@@ -72,6 +72,12 @@ public class AuthController {
         private String newPassword;
     }
 
+    @Data
+    public static class VerifyOtpRequest {
+        private String email;
+        private String otp;
+    }
+
     // ── Patient Registration ──────────────────────────────────────────────────
 
     @PostMapping("/register")
@@ -148,8 +154,26 @@ public class AuthController {
     public ResponseEntity<?> forgotPassword(@RequestBody ForgotPasswordRequest req) {
         try {
             String otp = authService.generatePasswordResetOtp(req.getEmail());
-            // In production, send OTP via email. For now, return it in response.
-            return ResponseEntity.ok(Map.of("message", "OTP sent to email", "otp", otp, "email", req.getEmail()));
+            // Return OTP in response for development/testing
+            return ResponseEntity.ok(Map.of(
+                "message", "OTP sent to your email. For development: " + otp,
+                "otp", otp,
+                "email", req.getEmail()
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/verify-otp")
+    public ResponseEntity<?> verifyOtp(@RequestBody VerifyOtpRequest req) {
+        try {
+            boolean isValid = authService.verifyOtp(req.getEmail(), req.getOtp());
+            if (isValid) {
+                return ResponseEntity.ok(Map.of("message", "OTP verified successfully"));
+            } else {
+                return ResponseEntity.badRequest().body(Map.of("message", "Invalid or expired OTP"));
+            }
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
