@@ -7,6 +7,24 @@ export default function DoctorDashboard({ user }) {
   const [doctorsList, setDoctorsList] = useState([]);
   const [selectedDoctor, setSelectedDoctor] = useState(user?.doctorId || '');
   const [queueState, setQueueState] = useState({ doctorId: '', doctorName: '', date: '', currentServingNumber: 0, items: [] });
+  const [appointments, setAppointments] = useState([]);
+  const [sessionActive, setSessionActive] = useState(false);
+  const [dailyCounts, setDailyCounts] = useState(() => {
+    // Use local date (not UTC) so timezone like IST (+5:30) doesn't roll back a day
+    const localDate = (d) => {
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    };
+    const days = {};
+    const today = new Date();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      days[localDate(d)] = 0;
+    }
+    return days;
+  });
+  const [selectedDate, setSelectedDate] = useState(null);
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [actionAlert, setActionAlert] = useState(null);
   const [scheduleForm, setScheduleForm] = useState({
@@ -16,8 +34,10 @@ export default function DoctorDashboard({ user }) {
     lunchBreakStart: '13:00',
     lunchBreakEnd: '14:00',
     avgSlotDuration: '20',
-    leaveDates: [],
-    dailyCapacity: '20'
+    leaveDates: []
+  });
+  const [capacityForm, setCapacityForm] = useState({
+    maxPatientsPerDay: 25
   });
 
   const token = localStorage.getItem('token');
@@ -48,21 +68,126 @@ export default function DoctorDashboard({ user }) {
   useEffect(() => {
     if (selectedDoctor) {
       fetchQueue(selectedDoctor);
+      fetchAppointments(selectedDoctor);
+      fetchDailyCounts(selectedDoctor);
       fetchSchedule(selectedDoctor);
+      fetchDoctorCapacity(selectedDoctor);
+      fetchSessionStatus(selectedDoctor);
+    }
+  }, [selectedDoctor]);
+
+  // Poll for updates every 30 seconds
+  useEffect(() => {
+    if (selectedDoctor) {
+      const interval = setInterval(() => {
+        fetchDailyCounts(selectedDoctor);
+        fetchQueue(selectedDoctor);
+        fetchAppointments(selectedDoctor);
+      }, 30000); // 30 seconds
+      
+      return () => clearInterval(interval);
     }
   }, [selectedDoctor]);
 
   const fetchQueue = async (docId) => {
     try {
+      console.log('Fetching queue for doctor:', docId);
       const response = await fetch(`${API_URL}/api/v1/queues/${docId}/today`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
         const data = await response.json();
+        console.log('Queue data received:', data);
         setQueueState(data);
+      } else {
+        console.error('Failed to fetch queue. Status:', response.status);
       }
     } catch (err) {
       console.error('Failed to fetch queue state:', err);
+    }
+  };
+
+  const fetchAppointments = async (docId) => {
+    try {
+      console.log('Fetching appointments for doctor:', docId);
+      const response = await fetch(`${API_URL}/api/v1/appointments?doctorId=${docId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Appointments received:', data);
+        setAppointments(data);
+      } else {
+        console.error('Failed to fetch appointments. Status:', response.status);
+      }
+    } catch (err) {
+      console.error('Failed to fetch appointments:', err);
+    }
+  };
+
+  // Helper: local calendar date string (YYYY-MM-DD) — avoids UTC offset issues
+  const localDateStr = (d) => {
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+
+  // Always generate 7 days (today → today+6) using LOCAL date so the window
+  // rolls forward automatically each day and never shows past dates
+  const generate7DayDates = () => {
+    const days = {};
+    const today = new Date();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      days[localDateStr(d)] = 0;
+    }
+    return days;
+  };
+
+  const fetchDailyCounts = async (docId) => {
+    // Pre-populate with 0s so grid always shows
+    const baseDays = generate7DayDates();
+    setDailyCounts(baseDays);
+    try {
+      const today = new Date();
+      const startDate = localDateStr(today);
+      const end = new Date(today);
+      end.setDate(today.getDate() + 6);
+      const endDate = localDateStr(end);
+      
+      console.log('Fetching daily counts for doctor:', docId, 'from', startDate, 'to', endDate);
+      const response = await fetch(`${API_URL}/api/v1/appointments/doctors/${docId}/daily-counts?startDate=${startDate}&endDate=${endDate}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Daily counts received:', data);
+        // Merge API data into base days (keep 0 for days not returned)
+        setDailyCounts({ ...baseDays, ...data });
+      } else {
+        console.error('Failed to fetch daily counts. Status:', response.status);
+        // Keep the base days with 0s so the grid still renders
+      }
+    } catch (err) {
+      console.error('Failed to fetch daily counts:', err);
+      // Keep the base days with 0s so the grid still renders
+    }
+  };
+
+  const handleDateClick = (date) => {
+    console.log('Date clicked:', date);
+    setSelectedDate(date);
+    // Fetch queue for the selected date
+    if (selectedDoctor) {
+      fetch(`${API_URL}/api/v1/queues/${selectedDoctor}/today?date=${date}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log('Queue data for date:', data);
+        setQueueState(data);
+      })
+      .catch(err => console.error('Failed to fetch queue for date:', err));
     }
   };
 
@@ -80,8 +205,7 @@ export default function DoctorDashboard({ user }) {
           lunchBreakStart: data.breakStartTime || '13:00',
           lunchBreakEnd: data.breakEndTime || '14:00',
           avgSlotDuration: String(data.slotDurationMinutes || 20),
-          leaveDates: data.leaveDates || [],
-          dailyCapacity: String(data.dailyCapacity || 20)
+          leaveDates: data.leaveDates || []
         });
       }
     } catch (err) {
@@ -89,12 +213,97 @@ export default function DoctorDashboard({ user }) {
     }
   };
 
+  const fetchDoctorCapacity = async (docId) => {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/doctors/${docId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCapacityForm({
+          maxPatientsPerDay: data.maxPatientsPerDay || 25
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch doctor capacity:', err);
+    }
+  };
+
+  const fetchSessionStatus = async (docId) => {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/queues/${docId}/session`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSessionActive(data.sessionActive);
+      }
+    } catch (err) {
+      console.error('Failed to fetch session status:', err);
+    }
+  };
+
+  const handleToggleSession = async () => {
+    if (!selectedDoctor) {
+      console.error('No doctor selected');
+      showNotification('No doctor selected');
+      return;
+    }
+    try {
+      console.log('Toggling session for doctor:', selectedDoctor);
+      const response = await fetch(`${API_URL}/api/v1/queues/${selectedDoctor}/session`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      console.log('Session toggle response status:', response.status);
+      console.log('Response headers:', response.headers);
+      
+      // Get response text first to debug
+      const responseText = await response.text();
+      console.log('Response text:', responseText);
+      
+      if (response.ok) {
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch (e) {
+          console.error('Failed to parse JSON:', e);
+          showNotification('Server returned invalid response');
+          return;
+        }
+        
+        console.log('Session toggle response data:', data);
+        setSessionActive(data.sessionActive);
+        showNotification(data.message);
+        
+        // If session started, refresh the queue
+        if (data.sessionActive) {
+          fetchQueue(selectedDoctor);
+        }
+      } else {
+        let errorData;
+        try {
+          errorData = JSON.parse(responseText);
+        } catch (e) {
+          console.error('Failed to parse error JSON:', e);
+          showNotification('Failed to toggle session: ' + responseText);
+          return;
+        }
+        console.error('Session toggle failed:', errorData);
+        showNotification('Failed to toggle session: ' + (errorData.message || errorData.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to toggle session:', err);
+      showNotification('Failed to toggle session: ' + err.message);
+    }
+  };
+
   const items = queueState.items || [];
-  const currentServing = items.find(i => i.status === 'IN_PROGRESS');
-  const nextWaiting = items.find(i => i.status === 'CONFIRMED' || i.status === 'WAITING_FOR_SCHEDULING');
+  const currentServing = items.find(i => i.status === 'NOW_SERVING');
+  const nextWaiting = items.find(i => i.status === 'WAITING' || i.status === 'APPROACHING');
 
   const totalCount = items.length;
-  const waitingCount = items.filter(i => i.status === 'CONFIRMED' || i.status === 'WAITING_FOR_SCHEDULING').length;
+  const waitingCount = items.filter(i => i.status === 'WAITING' || i.status === 'APPROACHING').length;
   const completedCount = items.filter(i => i.status === 'COMPLETED').length;
   const noShowCount = items.filter(i => i.status === 'NO_SHOW').length;
 
@@ -120,8 +329,7 @@ export default function DoctorDashboard({ user }) {
           breakStartTime: scheduleForm.lunchBreakStart,
           breakEndTime: scheduleForm.lunchBreakEnd,
           slotDurationMinutes: parseInt(scheduleForm.avgSlotDuration),
-          leaveDates: scheduleForm.leaveDates,
-          dailyCapacity: parseInt(scheduleForm.dailyCapacity)
+          leaveDates: scheduleForm.leaveDates
         })
       });
 
@@ -137,6 +345,32 @@ export default function DoctorDashboard({ user }) {
     }
   };
 
+  const handleSaveCapacity = async () => {
+    if (!selectedDoctor) return;
+    try {
+      const response = await fetch(`${API_URL}/api/v1/doctors/${selectedDoctor}/capacity`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          maxPatientsPerDay: capacityForm.maxPatientsPerDay
+        })
+      });
+
+      if (response.ok) {
+        showNotification('Capacity updated successfully! Appointments will be rescheduled automatically.');
+      } else {
+        const error = await response.json();
+        showNotification('Failed to update capacity: ' + (error.error || error.message || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Failed to update capacity:', error);
+      showNotification('Failed to update capacity');
+    }
+  };
+
   const handleCallNext = async () => {
     if (!selectedDoctor) return;
     try {
@@ -148,7 +382,7 @@ export default function DoctorDashboard({ user }) {
       if (response.ok) {
         const updatedQueue = await response.json();
         setQueueState(updatedQueue);
-        const serving = updatedQueue.items.find(i => i.status === 'IN_PROGRESS');
+        const serving = updatedQueue.items.find(i => i.status === 'NOW_SERVING');
         if (serving) {
           showNotification(`Called Queue #${serving.queueNumber} (${serving.patientName}) to Consultation Room.`);
         } else {
@@ -267,7 +501,7 @@ export default function DoctorDashboard({ user }) {
 
   const filteredItems = items.filter(item => {
     if (filterStatus === 'ALL') return true;
-    if (filterStatus === 'WAITING') return item.status === 'CONFIRMED' || item.status === 'WAITING_FOR_SCHEDULING';
+    if (filterStatus === 'WAITING') return item.status === 'WAITING' || item.status === 'APPROACHING';
     return item.status === filterStatus;
   });
 
@@ -368,6 +602,97 @@ export default function DoctorDashboard({ user }) {
 
           </div>
 
+          {/* 7-Day Patient Counts */}
+          <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>7-Day Appointment Overview</h3>
+              {selectedDate && (
+                <button
+                  onClick={() => {
+                    setSelectedDate(null);
+                    if (selectedDoctor) fetchQueue(selectedDoctor);
+                  }}
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    border: '1px solid var(--border-color)',
+                    background: 'rgba(255,255,255,0.05)',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Reset to Today
+                </button>
+              )}
+            </div>
+            {!selectedDoctor ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                Select a doctor to view appointment overview.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.75rem' }}>
+                {Object.entries(dailyCounts).map(([date, count]) => {
+                  const dateObj = new Date(date);
+                  const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+                  const dayNum = dateObj.getDate();
+                  const isToday = date === localDateStr(new Date());
+                  const isSelected = selectedDate === date;
+                  
+                  return (
+                    <div 
+                      key={date}
+                      onClick={() => {
+                        console.log('Date card clicked:', date);
+                        handleDateClick(date);
+                      }}
+                      style={{
+                        background: isSelected ? 'rgba(16, 185, 129, 0.15)' : (isToday ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.03)'),
+                        border: isSelected ? '2px solid #10b981' : (isToday ? '1px solid #3b82f6' : '1px solid var(--border-color)'),
+                        borderRadius: '10px',
+                        padding: '1rem',
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        userSelect: 'none'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isSelected) {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                          e.currentTarget.style.transform = 'translateY(-2px)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isSelected) {
+                          e.currentTarget.style.background = isToday ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.03)';
+                          e.currentTarget.style.transform = 'translateY(0)';
+                        }
+                      }}
+                    >
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '0.25rem' }}>
+                        {dayName}
+                      </div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: isSelected ? '#10b981' : (isToday ? '#3b82f6' : 'var(--text-primary)'), marginBottom: '0.25rem' }}>
+                        {dayNum}
+                      </div>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 700, color: count > 0 ? '#10b981' : 'var(--text-subtle)' }}>
+                        {count} {count === 1 ? 'patient' : 'patients'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {selectedDate && (
+              <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px', border: '1px solid #10b981' }}>
+                <p style={{ fontSize: '0.85rem', color: '#10b981', fontWeight: 600, margin: 0 }}>
+                  Viewing appointments for: {new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Main Grid: Live Caller Card & Queue Table */}
           <div style={{ display: 'grid', gridTemplateColumns: '400px 1fr', gap: '1.5rem' }}>
             
@@ -378,8 +703,26 @@ export default function DoctorDashboard({ user }) {
                   <div style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--cyan)', letterSpacing: '0.05em' }}>
                     LIVE PATIENT CALLER
                   </div>
-                  <span className="badge badge-now-serving">ACTIVE SESSION</span>
+                  <span className={`badge ${sessionActive ? 'badge-now-serving' : 'badge-waiting'}`}>
+                    {sessionActive ? 'SESSION ACTIVE' : 'SESSION INACTIVE'}
+                  </span>
                 </div>
+
+                {/* Session Toggle Button */}
+                <button
+                  onClick={handleToggleSession}
+                  className={sessionActive ? 'btn-danger' : 'btn-success'}
+                  style={{
+                    width: '100%',
+                    justifyContent: 'center',
+                    padding: '0.75rem',
+                    fontSize: '0.9rem',
+                    marginBottom: '1.25rem',
+                    fontWeight: 600
+                  }}
+                >
+                  {sessionActive ? <><UserX size={16} /> END SESSION</> : <><Play size={16} fill="#ffffff" /> START SESSION</>}
+                </button>
 
                 {currentServing ? (
                   <div style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)', borderRadius: '16px', padding: '1.5rem', border: '1px solid rgba(6, 182, 212, 0.25)', marginBottom: '1.25rem' }}>
@@ -425,8 +768,16 @@ export default function DoctorDashboard({ user }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <button
                   onClick={handleCallNext}
+                  disabled={!sessionActive}
                   className="btn-success"
-                  style={{ width: '100%', justifyContent: 'center', padding: '0.9rem', fontSize: '1rem' }}
+                  style={{ 
+                    width: '100%', 
+                    justifyContent: 'center', 
+                    padding: '0.9rem', 
+                    fontSize: '1rem',
+                    opacity: sessionActive ? 1 : 0.5,
+                    cursor: sessionActive ? 'pointer' : 'not-allowed'
+                  }}
                 >
                   <Play size={18} fill="#ffffff" /> CALL NEXT PATIENT
                 </button>
@@ -463,7 +814,7 @@ export default function DoctorDashboard({ user }) {
 
                 {/* Filter Pills */}
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  {['ALL', 'WAITING', 'IN_PROGRESS', 'COMPLETED', 'NO_SHOW'].map(st => (
+                  {['ALL', 'WAITING', 'NOW_SERVING', 'COMPLETED', 'NO_SHOW'].map(st => (
                     <button
                       key={st}
                       onClick={() => setFilterStatus(st)}
@@ -499,54 +850,62 @@ export default function DoctorDashboard({ user }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredItems.map(item => (
-                      <tr
-                        key={item.appointmentId}
-                        style={{
-                          borderBottom: '1px solid var(--border-color)',
-                          background: item.status === 'IN_PROGRESS' ? 'rgba(6, 182, 212, 0.06)' : 'transparent'
-                        }}
-                      >
-                        <td style={{ padding: '12px 10px', fontWeight: 800, fontSize: '1rem', color: item.status === 'IN_PROGRESS' ? '#38bdf8' : 'inherit' }}>
-                          #{item.queueNumber}
-                        </td>
-                        <td style={{ padding: '12px 10px', fontWeight: 600 }}>{item.patientName}</td>
-                        <td style={{ padding: '12px 10px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>{item.appointmentId}</td>
-                        <td style={{ padding: '12px 10px' }}>
-                          {item.status === 'IN_PROGRESS' && <span className="badge badge-now-serving">IN PROGRESS</span>}
-                          {item.status === 'CONFIRMED' && <span className="badge badge-approaching">CONFIRMED</span>}
-                          {(item.status === 'WAITING_FOR_SCHEDULING' || item.status === 'WAITLISTED') && <span className="badge badge-waiting">WAITING</span>}
-                          {item.status === 'COMPLETED' && <span className="badge badge-completed">COMPLETED</span>}
-                          {item.status === 'NO_SHOW' && <span className="badge badge-noshow">NO SHOW</span>}
-                        </td>
-                        <td style={{ padding: '12px 10px' }}>
-                          {item.isPriority ? (
-                            <span className="badge badge-priority"><Flame size={12} /> Emergency</span>
-                          ) : (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-subtle)' }}>Standard</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '12px 10px', color: 'var(--cyan)', fontWeight: 600, fontSize: '0.82rem' }}>
-                          {item.formattedWaitRange}
-                        </td>
-                        <td style={{ padding: '12px 10px', textAlign: 'right' }}>
-                          <button
-                            onClick={() => handleTogglePriority(item.appointmentId, item.isPriority)}
-                            style={{
-                              background: item.isPriority ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.05)',
-                              color: item.isPriority ? '#f87171' : 'var(--text-muted)',
-                              border: '1px solid var(--border-color)',
-                              padding: '4px 8px',
-                              borderRadius: '6px',
-                              fontSize: '0.75rem',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            {item.isPriority ? 'Remove Priority' : 'Set Priority'}
-                          </button>
+                    {filteredItems.length > 0 ? (
+                      filteredItems.map(item => (
+                        <tr
+                          key={item.appointmentId}
+                          style={{
+                            borderBottom: '1px solid var(--border-color)',
+                            background: item.status === 'NOW_SERVING' ? 'rgba(6, 182, 212, 0.06)' : 'transparent'
+                          }}
+                        >
+                          <td style={{ padding: '12px 10px', fontWeight: 800, fontSize: '1rem', color: item.status === 'NOW_SERVING' ? '#38bdf8' : 'inherit' }}>
+                            #{item.queueNumber}
+                          </td>
+                          <td style={{ padding: '12px 10px', fontWeight: 600 }}>{item.patientName}</td>
+                          <td style={{ padding: '12px 10px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>{item.appointmentId}</td>
+                          <td style={{ padding: '12px 10px' }}>
+                            {item.status === 'NOW_SERVING' && <span className="badge badge-now-serving">NOW SERVING</span>}
+                            {item.status === 'APPROACHING' && <span className="badge badge-approaching">APPROACHING</span>}
+                            {item.status === 'WAITING' && <span className="badge badge-waiting">WAITING</span>}
+                            {item.status === 'COMPLETED' && <span className="badge badge-completed">COMPLETED</span>}
+                            {item.status === 'NO_SHOW' && <span className="badge badge-noshow">NO SHOW</span>}
+                          </td>
+                          <td style={{ padding: '12px 10px' }}>
+                            {item.isPriority ? (
+                              <span className="badge badge-priority"><Flame size={12} /> Emergency</span>
+                            ) : (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-subtle)' }}>Standard</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '12px 10px', color: 'var(--cyan)', fontWeight: 600, fontSize: '0.82rem' }}>
+                            {item.formattedWaitRange}
+                          </td>
+                          <td style={{ padding: '12px 10px', textAlign: 'right' }}>
+                            <button
+                              onClick={() => handleTogglePriority(item.appointmentId, item.isPriority)}
+                              style={{
+                                background: item.isPriority ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.05)',
+                                color: item.isPriority ? '#f87171' : 'var(--text-muted)',
+                                border: '1px solid var(--border-color)',
+                                padding: '4px 8px',
+                                borderRadius: '6px',
+                                fontSize: '0.75rem',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {item.isPriority ? 'Remove Priority' : 'Set Priority'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No appointments found for today. {appointments.length > 0 ? `Total appointments loaded: ${appointments.length}` : 'No appointments in database.'}
                         </td>
                       </tr>
-                    ))}
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -558,13 +917,42 @@ export default function DoctorDashboard({ user }) {
       ) : (
         /* Schedule Management Tab */
         <div className="glass-panel" style={{ padding: '2rem' }}>
-          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem' }}>Doctor Working Hours & Slot Configuration</h3>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem' }}>Doctor Working Hours & Capacity Configuration</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-            Updating your working schedule automatically recalculates available booking slots shown to patients on the mobile app.
+            Updating your working schedule and capacity automatically recalculates available booking slots shown to patients.
           </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
             
+            <div>
+              <h4 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem', color: '#60a5fa' }}>Daily Patient Capacity</h4>
+              
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
+                  Maximum Patients Per Day
+                </label>
+                <input
+                  type="number"
+                  className="input-field"
+                  value={capacityForm.maxPatientsPerDay}
+                  onChange={(e) => setCapacityForm({ ...capacityForm, maxPatientsPerDay: parseInt(e.target.value) || 25 })}
+                  min="1"
+                  max="50"
+                />
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-subtle)', marginTop: '4px' }}>
+                  This determines how many patients can be scheduled per day. Increasing this will automatically reschedule waitlisted patients.
+                </p>
+              </div>
+
+              <button
+                onClick={handleSaveCapacity}
+                className="btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                Update Capacity
+              </button>
+            </div>
+
             <div>
               <h4 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem', color: '#60a5fa' }}>Regular Working Schedule</h4>
               
@@ -650,28 +1038,16 @@ export default function DoctorDashboard({ user }) {
               </div>
 
               <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Average Slot Duration (minutes)</label>
-                <input
-                  type="number"
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Average Slot Duration (Minutes)</label>
+                <select
                   className="input-field"
                   value={scheduleForm.avgSlotDuration}
                   onChange={(e) => setScheduleForm({ ...scheduleForm, avgSlotDuration: e.target.value })}
-                />
-              </div>
-
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Daily Patient Capacity</label>
-                <input
-                  type="number"
-                  className="input-field"
-                  value={scheduleForm.dailyCapacity}
-                  onChange={(e) => setScheduleForm({ ...scheduleForm, dailyCapacity: e.target.value })}
-                  min="1"
-                  max="50"
-                />
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-subtle)', marginTop: '4px' }}>
-                  Maximum number of patients you can see per day. This controls automatic appointment scheduling.
-                </p>
+                >
+                  <option value="15">15 Minutes</option>
+                  <option value="20">20 Minutes</option>
+                  <option value="30">30 Minutes</option>
+                </select>
               </div>
 
               <button className="btn-primary" onClick={handleSaveSchedule}>
