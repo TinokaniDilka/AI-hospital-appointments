@@ -10,12 +10,11 @@ export default function PatientDashboard({ user }) {
   const [bookingForm, setBookingForm] = useState({
     doctorId: '',
     date: '',
-    timeSlot: '',
     reason: ''
   });
+  const [previewSlot, setPreviewSlot] = useState(null);
   const [doctors, setDoctors] = useState([]);
   const [availableSlots, setAvailableSlots] = useState([]);
-  const [remainingSlots, setRemainingSlots] = useState(0);
   const [profileForm, setProfileForm] = useState({
     fullName: user?.fullName || '',
     email: user?.email || '',
@@ -113,7 +112,7 @@ export default function PatientDashboard({ user }) {
       const token = localStorage.getItem('token');
       console.log('Fetching slots for doctorId:', doctorId, 'date:', date);
       
-      // Fetch available slots
+      // Use the original slots endpoint that returns time slots
       const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments/slots?doctorId=${doctorId}&date=${date}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -127,25 +126,7 @@ export default function PatientDashboard({ user }) {
         setAvailableSlots(data);
       } else {
         console.error('Failed to fetch slots. Status:', response.status);
-        const errorText = await response.text();
-        console.error('Error:', errorText);
         setAvailableSlots([]);
-      }
-
-      // Fetch remaining slots count
-      try {
-        const capacityResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/capacity/remaining?doctorId=${doctorId}&date=${date}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        if (capacityResponse.ok) {
-          const capacityData = await capacityResponse.json();
-          setRemainingSlots(capacityData.remainingSlots || 0);
-        }
-      } catch (err) {
-        console.error('Failed to fetch remaining slots:', err);
-        setRemainingSlots(0);
       }
     } catch (error) {
       console.error('Failed to fetch slots:', error);
@@ -153,8 +134,105 @@ export default function PatientDashboard({ user }) {
     }
   };
 
+  const previewAppointmentSlot = async (doctorId, date) => {
+    if (!doctorId || !date) {
+      setPreviewSlot(null);
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      console.log('Previewing slot for doctorId:', doctorId, 'date:', date);
+      
+      // Fetch doctor details to get working hours
+      const doctorResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/doctors/${doctorId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!doctorResponse.ok) {
+        console.error('Failed to fetch doctor:', doctorResponse.status);
+        setPreviewSlot(null);
+        return;
+      }
+
+      const doctor = await doctorResponse.json();
+      console.log('Doctor data:', doctor);
+      
+      // Get existing appointments for this doctor and date
+      const aptResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments?doctorId=${doctorId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!aptResponse.ok) {
+        console.error('Failed to fetch appointments:', aptResponse.status);
+        setPreviewSlot(null);
+        return;
+      }
+
+      const appointments = await aptResponse.json();
+      const sameDayAppointments = appointments.filter(apt => 
+        (apt.scheduledDate === date || apt.preferredDate === date) && 
+        apt.status !== 'CANCELLED'
+      );
+      
+      console.log('Same day appointments:', sameDayAppointments.length);
+      
+      // Check if doctor has reached daily capacity
+      const maxPatients = doctor.maxPatientsPerDay || 25;
+      if (sameDayAppointments.length >= maxPatients) {
+        setPreviewSlot({
+          error: 'No slots available - doctor at full capacity',
+          queueNumber: null,
+          timeSlot: null
+        });
+        return;
+      }
+      
+      // Calculate next queue number
+      const nextQueueNumber = sameDayAppointments.length + 1;
+      
+      // Calculate time slot based on doctor's working hours
+      const startHour = parseInt(doctor.startTime?.split(':')[0]) || 9;
+      const startMinute = parseInt(doctor.startTime?.split(':')[1]) || 0;
+      const endHour = parseInt(doctor.endTime?.split(':')[0]) || 17;
+      
+      console.log('Doctor hours:', doctor.startTime, doctor.endTime);
+      console.log('Start hour:', startHour, 'End hour:', endHour);
+      
+      // Calculate slot duration based on working hours and capacity
+      const totalWorkingMinutes = (endHour - startHour) * 60 + (startMinute || 0);
+      const slotDuration = Math.floor(totalWorkingMinutes / maxPatients);
+      
+      console.log('Total working minutes:', totalWorkingMinutes, 'Slot duration:', slotDuration);
+      
+      const totalMinutes = (nextQueueNumber - 1) * slotDuration;
+      const hour = startHour + Math.floor(totalMinutes / 60);
+      const minute = (startMinute + totalMinutes % 60) % 60;
+      const timeSlot = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+      
+      console.log('Calculated time slot:', timeSlot, 'Queue number:', nextQueueNumber);
+      
+      setPreviewSlot({
+        queueNumber: nextQueueNumber,
+        timeSlot: timeSlot,
+        date: date,
+        doctorName: doctor.doctorName,
+        workingHours: `${doctor.startTime || '09:00'} - ${doctor.endTime || '17:00'}`
+      });
+    } catch (error) {
+      console.error('Failed to preview slot:', error);
+      setPreviewSlot(null);
+    }
+  };
+
   const handleBookAppointment = async () => {
-    if (!bookingForm.doctorId || !bookingForm.date || !bookingForm.timeSlot) {
+    if (!bookingForm.doctorId || !bookingForm.date) {
       alert('Please fill in all required fields');
       return;
     }
@@ -171,8 +249,8 @@ export default function PatientDashboard({ user }) {
           patientId: user.patientId,
           patientName: user.fullName,
           doctorId: bookingForm.doctorId,
-          date: bookingForm.date,
-          timeSlot: bookingForm.timeSlot
+          preferredDate: bookingForm.date,
+          timeSlot: 'TBD' // Time slot will be assigned by scheduler
         })
       });
 
@@ -180,15 +258,21 @@ export default function PatientDashboard({ user }) {
         const newAppointment = await response.json();
         setAppointments([...appointments, newAppointment]);
         setShowBookingModal(false);
-        setBookingForm({ doctorId: '', date: '', timeSlot: '', reason: '' });
-        alert('Appointment booked successfully!');
+        setBookingForm({ doctorId: '', date: '', reason: '' });
+        
+        // Show assigned time slot and queue number
+        const message = newAppointment.timeSlot && newAppointment.timeSlot !== 'TBD'
+          ? `Appointment booked successfully!\nTime: ${newAppointment.timeSlot}\nYour Number: #${newAppointment.queuePosition || newAppointment.queueNumber || 'N/A'}`
+          : 'Appointment booked successfully!';
+        alert(message);
       } else {
-        const error = await response.json();
-        alert(error.message || 'Failed to book appointment');
+        const errorText = await response.text();
+        console.error('Booking failed:', errorText);
+        alert('Failed to book appointment. Please make sure the backend is running.');
       }
     } catch (error) {
       console.error('Failed to book appointment:', error);
-      alert('Failed to book appointment');
+      alert('Failed to book appointment. Please check if the backend is running.');
     }
   };
 
@@ -497,19 +581,24 @@ export default function PatientDashboard({ user }) {
                     <div>
                       <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.25rem' }}>{apt.doctorName}</h3>
                       <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '0.5rem' }}>{apt.departmentName || apt.department}</p>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Calendar size={16} style={{ color: '#64748b' }} />
-                        <span style={{ color: '#64748b', fontSize: '0.85rem' }}>{apt.appointmentDate}</span>
-                        <Clock size={16} style={{ color: '#64748b', marginLeft: '0.5rem' }} />
-                        <span style={{ color: '#64748b', fontSize: '0.85rem' }}>{apt.timeSlot}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.85rem', color: '#64748b' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                          <Clock size={16} />
+                          {apt.scheduledDate || apt.preferredDate || apt.date} • {apt.timeSlot || 'TBD'}
+                        </span>
                       </div>
-                      {apt.status === 'WAITLISTED' && apt.queuePosition > 0 && (
-                        <p style={{ color: '#f59e0b', fontSize: '0.85rem', marginTop: '0.5rem', fontWeight: 600 }}>
+                      {(apt.queuePosition || apt.queueNumber) && (
+                        <p style={{ color: '#0ea5e9', fontSize: '0.85rem', marginTop: '0.5rem', fontWeight: 600 }}>
+                          Your Number: #{apt.queuePosition || apt.queueNumber}
+                        </p>
+                      )}
+                      {apt.status === 'WAITLISTED' && apt.queuePosition && (
+                        <p style={{ color: '#f59e0b', fontSize: '0.85rem', marginTop: '0.25rem', fontWeight: 600 }}>
                           Queue Position: #{apt.queuePosition}
                         </p>
                       )}
+                      <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.5rem' }}>Reason: {apt.reason}</p>
                     </div>
-                    <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.5rem' }}>Reason: {apt.reason}</p>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <span style={{
@@ -835,10 +924,10 @@ export default function PatientDashboard({ user }) {
                   onChange={(e) => {
                     const selectedDoctorId = e.target.value;
                     console.log('Doctor selected:', selectedDoctorId);
-                    setBookingForm({ ...bookingForm, doctorId: selectedDoctorId, timeSlot: '' });
-                    setAvailableSlots([]);
+                    setBookingForm({ ...bookingForm, doctorId: selectedDoctorId });
+                    setPreviewSlot(null);
                     if (bookingForm.date) {
-                      fetchAvailableSlots(selectedDoctorId, bookingForm.date);
+                      previewAppointmentSlot(selectedDoctorId, bookingForm.date);
                     }
                   }}
                   style={{
@@ -871,7 +960,7 @@ export default function PatientDashboard({ user }) {
                     console.log('Date selected:', selectedDate);
                     setBookingForm({ ...bookingForm, date: selectedDate });
                     if (bookingForm.doctorId) {
-                      fetchAvailableSlots(bookingForm.doctorId, selectedDate);
+                      previewAppointmentSlot(bookingForm.doctorId, selectedDate);
                     }
                   }}
                   min={new Date().toISOString().split('T')[0]}
@@ -888,59 +977,46 @@ export default function PatientDashboard({ user }) {
                 />
               </div>
 
-              {bookingForm.doctorId && bookingForm.date && (
-                <div style={{
-                  background: remainingSlots > 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-                  border: `1px solid ${remainingSlots > 0 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
-                  borderRadius: '10px',
-                  padding: '0.75rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
+              {previewSlot && (
+                <div style={{ 
+                  padding: '1rem', 
+                  borderRadius: '10px', 
+                  border: '1px solid',
+                  background: previewSlot.error ? '#fef2f2' : '#f0fdf4',
+                  borderColor: previewSlot.error ? '#fecaca' : '#86efac'
                 }}>
-                  {remainingSlots > 0 ? (
-                    <>
-                      <span style={{ color: '#10b981', fontSize: '0.85rem', fontWeight: 600 }}>
-                        {remainingSlots} slots remaining
-                      </span>
-                    </>
+                  {previewSlot.error ? (
+                    <p style={{ fontSize: '0.85rem', color: '#dc2626', margin: 0, fontWeight: 600 }}>
+                      {previewSlot.error}
+                    </p>
                   ) : (
                     <>
-                      <span style={{ color: '#f59e0b', fontSize: '0.85rem', fontWeight: 600 }}>
-                        No slots available - you will be waitlisted
-                      </span>
+                      <p style={{ fontSize: '0.85rem', color: '#166534', margin: 0, fontWeight: 600 }}>
+                        Your Allocated Slot:
+                      </p>
+                      <div style={{ marginTop: '0.5rem', display: 'flex', gap: '1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                          <Clock size={16} color="#166534" />
+                          <span style={{ fontSize: '0.9rem', color: '#166534', fontWeight: 600 }}>
+                            {previewSlot.timeSlot}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                          <User size={16} color="#166534" />
+                          <span style={{ fontSize: '0.9rem', color: '#166534', fontWeight: 600 }}>
+                            #{previewSlot.queueNumber}
+                          </span>
+                        </div>
+                      </div>
+                      {previewSlot.workingHours && (
+                        <p style={{ fontSize: '0.75rem', color: '#15803d', marginTop: '0.5rem', margin: '0.5rem 0 0 0' }}>
+                          Doctor Hours: {previewSlot.workingHours}
+                        </p>
+                      )}
                     </>
                   )}
                 </div>
               )}
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Select Time Slot</label>
-                <select
-                  value={bookingForm.timeSlot}
-                  onChange={(e) => setBookingForm({ ...bookingForm, timeSlot: e.target.value })}
-                  disabled={!bookingForm.doctorId || !bookingForm.date || availableSlots.length === 0}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    background: '#f1f5f9',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '10px',
-                    color: '#0f172a',
-                    fontSize: '0.95rem',
-                    outline: 'none',
-                    opacity: (!bookingForm.doctorId || !bookingForm.date || availableSlots.length === 0) ? 0.5 : 1
-                  }}
-                >
-                  <option value="">Choose a time slot</option>
-                  {availableSlots.map((slot) => (
-                    <option key={slot} value={slot}>{slot}</option>
-                  ))}
-                </select>
-                {bookingForm.doctorId && bookingForm.date && availableSlots.length === 0 && (
-                  <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.25rem' }}>No available slots for this date</p>
-                )}
-              </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Reason (Optional)</label>
