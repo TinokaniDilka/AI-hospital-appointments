@@ -44,6 +44,10 @@ public class Doctor {
     // Leave dates
     private java.util.List<String> leaveDates; // ["2026-09-15", "2026-09-16"]
     
+    // Session status
+    @Builder.Default
+    private boolean sessionActive = false;
+    
     private String qualification;
     private String experienceYears;
     @Builder.Default
