@@ -19,11 +19,14 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class AuthService {
 
+    private final java.util.concurrent.ConcurrentHashMap<String, String> otpStore = new java.util.concurrent.ConcurrentHashMap<>();
+
     private final UserRepository userRepository;
     private final PatientRepository patientRepository;
     private final DoctorRepository doctorRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
+    private final EmailService emailService;
 
     @Data
     public static class AuthResponse {
@@ -66,7 +69,7 @@ public class AuthService {
                 .build();
         Patient savedPatient = patientRepository.save(patient);
 
-        String token = tokenProvider.generateToken(savedUser.getId(), savedUser.getEmail(), savedUser.getRole(), savedUser.getFullName());
+        String token = tokenProvider.generateToken(savedUser.getId(), savedUser.getEmail(), savedUser.getRole(), savedUser.getFullName(), savedPatient.getId(), null);
 
         AuthResponse res = new AuthResponse();
         res.setToken(token);
@@ -111,7 +114,7 @@ public class AuthService {
                 .build();
         Doctor savedDoctor = doctorRepository.save(doctor);
 
-        String token = tokenProvider.generateToken(savedUser.getId(), savedUser.getEmail(), savedUser.getRole(), savedUser.getFullName());
+        String token = tokenProvider.generateToken(savedUser.getId(), savedUser.getEmail(), savedUser.getRole(), savedUser.getFullName(), null, savedDoctor.getId());
 
         AuthResponse res = new AuthResponse();
         res.setToken(token);
@@ -140,7 +143,7 @@ public class AuthService {
                 .build();
         User savedUser = userRepository.save(user);
 
-        String token = tokenProvider.generateToken(savedUser.getId(), savedUser.getEmail(), savedUser.getRole(), savedUser.getFullName());
+        String token = tokenProvider.generateToken(savedUser.getId(), savedUser.getEmail(), savedUser.getRole(), savedUser.getFullName(), null, null);
 
         AuthResponse res = new AuthResponse();
         res.setToken(token);
@@ -161,7 +164,23 @@ public class AuthService {
             throw new IllegalArgumentException("Invalid email or password");
         }
 
-        String token = tokenProvider.generateToken(user.getId(), user.getEmail(), user.getRole(), user.getFullName());
+        // Fetch patientId or doctorId based on role
+String patientId = null;
+String doctorId = null;
+
+if ("ROLE_PATIENT".equals(user.getRole())) {
+    var patient = patientRepository.findByUserId(user.getId());
+    if (patient.isPresent()) {
+        patientId = patient.get().getId();
+    }
+} else if ("ROLE_DOCTOR".equals(user.getRole())) {
+    var doctor = doctorRepository.findByUserId(user.getId());
+    if (doctor.isPresent()) {
+        doctorId = doctor.get().getId();
+    }
+}
+
+        String token = tokenProvider.generateToken(user.getId(), user.getEmail(), user.getRole(), user.getFullName(), patientId, doctorId);
 
         AuthResponse res = new AuthResponse();
         res.setToken(token);
@@ -169,13 +188,8 @@ public class AuthService {
         res.setEmail(user.getEmail());
         res.setFullName(user.getFullName());
         res.setRole(user.getRole());
-
-        // Attach patientId or doctorId based on role
-        if ("ROLE_PATIENT".equals(user.getRole())) {
-            patientRepository.findByUserId(user.getId()).ifPresent(p -> res.setPatientId(p.getId()));
-        } else if ("ROLE_DOCTOR".equals(user.getRole())) {
-            doctorRepository.findByUserId(user.getId()).ifPresent(d -> res.setDoctorId(d.getId()));
-        }
+        res.setPatientId(patientId);
+        res.setDoctorId(doctorId);
 
         return res;
     }
@@ -187,5 +201,46 @@ public class AuthService {
             user.setFcmToken(fcmToken);
             userRepository.save(user);
         });
+    }
+
+    // ── Password Reset OTP ────────────────────────────────────────────────────
+
+    public String generatePasswordResetOtp(String email) {
+        userRepository.findByEmail(email)
+            .orElseThrow(() -> new IllegalArgumentException("No account found with this email"));
+        String otp = String.format("%06d", (int)(Math.random() * 1000000));
+        otpStore.put(email, otp);
+        
+        // Send OTP via email
+        try {
+            emailService.sendOtpEmail(email, otp);
+            System.out.println("OTP sent successfully to email: " + email);
+        } catch (Exception e) {
+            System.err.println("Failed to send OTP email: " + e.getMessage());
+            System.err.println("Email configuration may be incorrect. Check application.properties");
+            System.out.println("DEV MODE - OTP for " + email + ": " + otp);
+        }
+        
+        return otp;
+    }
+
+    public boolean verifyOtp(String email, String otp) {
+        String stored = otpStore.get(email);
+        if (stored == null || !stored.equals(otp)) {
+            return false;
+        }
+        return true;
+    }
+
+    public void resetPassword(String email, String otp, String newPassword) {
+        String stored = otpStore.get(email);
+        if (stored == null || !stored.equals(otp)) {
+            throw new IllegalArgumentException("Invalid or expired OTP");
+        }
+        userRepository.findByEmail(email).ifPresent(user -> {
+            user.setPassword(passwordEncoder.encode(newPassword));
+            userRepository.save(user);
+        });
+        otpStore.remove(email);
     }
 }
