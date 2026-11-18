@@ -139,9 +139,10 @@ public class AppointmentService {
                 .branchName(doc.getBranchName())
                 .departmentId(doc.getDepartmentId())
                 .departmentName(doc.getDepartmentName())
-                .appointmentDate(dateStr)
+                .preferredDate(dateStr)
+                .scheduledDate(dateStr)
                 .timeSlot(timeSlot)
-                .status(AppointmentStatus.WAITING_FOR_SCHEDULING)
+                .status("WAITING")
                 .queuePosition(queueNumber)
                 .isPriority(false)
                 .build();
@@ -167,10 +168,10 @@ public class AppointmentService {
     public Appointment cancelAppointment(String id, String reason) {
         Appointment apt = appointmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Appointment not found"));
-        apt.setStatus(AppointmentStatus.CANCELLED);
+        apt.setStatus("CANCELLED");
         apt.setCancellationReason(reason);
         Appointment saved = appointmentRepository.save(apt);
-        queueService.setPatientStatus(apt.getDoctorId(), apt.getAppointmentDate(), apt.getAppointmentId(), "CANCELLED");
+        queueService.setPatientStatus(apt.getDoctorId(), apt.getPreferredDate(), apt.getAppointmentId(), "CANCELLED");
         return saved;
     }
 
