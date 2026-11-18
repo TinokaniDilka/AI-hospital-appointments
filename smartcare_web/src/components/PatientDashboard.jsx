@@ -7,14 +7,18 @@ export default function PatientDashboard({ user }) {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [bookingForm, setBookingForm] = useState({
     doctorId: '',
     date: '',
-    reason: ''
+    reason: '',
+    timeSlot: ''
   });
   const [previewSlot, setPreviewSlot] = useState(null);
   const [doctors, setDoctors] = useState([]);
   const [availableSlots, setAvailableSlots] = useState([]);
+  const [pendingAppointment, setPendingAppointment] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState('card');
   const [profileForm, setProfileForm] = useState({
     fullName: user?.fullName || '',
     email: user?.email || '',
@@ -26,12 +30,13 @@ export default function PatientDashboard({ user }) {
 
   useEffect(() => {
     const fetchAppointments = async () => {
-      if (!user?.patientId) return;
+      // Read patientId from token instead of user object for security
+      const token = localStorage.getItem('token');
+      if (!token) return;
 
       setLoading(true);
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments?patientId=${user.patientId}`, {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -232,8 +237,8 @@ export default function PatientDashboard({ user }) {
   };
 
   const handleBookAppointment = async () => {
-    if (!bookingForm.doctorId || !bookingForm.date) {
-      alert('Please fill in all required fields');
+    if (!bookingForm.doctorId || !bookingForm.date || !bookingForm.timeSlot) {
+      alert('Please select doctor, date, and time slot');
       return;
     }
 
@@ -250,29 +255,61 @@ export default function PatientDashboard({ user }) {
           patientName: user.fullName,
           doctorId: bookingForm.doctorId,
           preferredDate: bookingForm.date,
-          timeSlot: 'TBD' // Time slot will be assigned by scheduler
+          timeSlot: bookingForm.timeSlot,
+          paymentStatus: 'PENDING',
+          totalAmount: 100.0
         })
       });
 
       if (response.ok) {
         const newAppointment = await response.json();
-        setAppointments([...appointments, newAppointment]);
+        setPendingAppointment(newAppointment);
         setShowBookingModal(false);
-        setBookingForm({ doctorId: '', date: '', reason: '' });
-        
-        // Show assigned time slot and queue number
-        const message = newAppointment.timeSlot && newAppointment.timeSlot !== 'TBD'
-          ? `Appointment booked successfully!\nTime: ${newAppointment.timeSlot}\nYour Number: #${newAppointment.queuePosition || newAppointment.queueNumber || 'N/A'}`
-          : 'Appointment booked successfully!';
-        alert(message);
+        setShowPaymentModal(true);
       } else {
         const errorText = await response.text();
         console.error('Booking failed:', errorText);
-        alert('Failed to book appointment. Please make sure the backend is running.');
+        alert('Failed to book appointment: ' + errorText);
       }
     } catch (error) {
       console.error('Failed to book appointment:', error);
       alert('Failed to book appointment. Please check if the backend is running.');
+    }
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!pendingAppointment) return;
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments/confirm-payment`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          appointmentId: pendingAppointment.appointmentId || pendingAppointment.id,
+          paymentMethod: paymentMethod
+        })
+      });
+
+      if (response.ok) {
+        const updatedAppointment = await response.json();
+        setAppointments([...appointments, updatedAppointment]);
+        setShowPaymentModal(false);
+        setPendingAppointment(null);
+        setBookingForm({ doctorId: '', date: '', reason: '', timeSlot: '' });
+        
+        alert(`Appointment booked successfully!\nTime: ${updatedAppointment.timeSlot}\nYour Number: #${updatedAppointment.queuePosition || updatedAppointment.queueNumber || 'N/A'}`);
+      } else {
+        const errorText = await response.text();
+        console.error('Payment failed:', errorText);
+        alert('Failed to confirm payment: ' + errorText);
+      }
+    } catch (error) {
+      console.error('Failed to confirm payment:', error);
+      alert('Failed to confirm payment');
     }
   };
 
@@ -290,18 +327,43 @@ export default function PatientDashboard({ user }) {
 
       if (response.ok) {
         alert('Appointment cancelled successfully!');
-        if (user?.patientId) {
-          const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments?patientId=${user.patientId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (res.ok) setAppointments(await res.json());
-        }
+        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) setAppointments(await res.json());
       } else {
         alert('Failed to cancel appointment');
       }
     } catch (error) {
       console.error('Failed to cancel appointment:', error);
       alert('Failed to cancel appointment');
+    }
+  };
+
+  const handleCheckIn = async (aptId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments/${aptId}/check-in`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        alert('Checked in successfully! You have been added to the live queue.');
+        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/appointments`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) setAppointments(await res.json());
+      } else {
+        const errorText = await response.text();
+        alert('Failed to check in: ' + errorText);
+      }
+    } catch (error) {
+      console.error('Failed to check in:', error);
+      alert('Failed to check in');
     }
   };
 
@@ -336,7 +398,25 @@ export default function PatientDashboard({ user }) {
       case 'CONFIRMED': return { background: 'rgba(37, 99, 235, 0.15)', color: '#3b82f6', border: '1px solid rgba(37, 99, 235, 0.3)' };
       case 'PENDING': return { background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.3)' };
       case 'CANCELLED': return { background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)' };
+      case 'CHECKED_IN': return { background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)' };
+      case 'RESCHEDULED': return { background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6', border: '1px solid rgba(139, 92, 246, 0.3)' };
+      case 'WAITING_FOR_SCHEDULING': return { background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.3)' };
+      case 'WAITLISTED': return { background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.3)' };
       default: return { background: 'rgba(107, 114, 128, 0.15)', color: '#6b7280', border: '1px solid rgba(107, 114, 128, 0.3)' };
+    }
+  };
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'COMPLETED': return 'Completed';
+      case 'CONFIRMED': return 'Confirmed';
+      case 'PENDING': return 'Pending';
+      case 'CANCELLED': return 'Cancelled';
+      case 'CHECKED_IN': return 'Checked In';
+      case 'RESCHEDULED': return 'Rescheduled';
+      case 'WAITING_FOR_SCHEDULING': return 'Awaiting Confirmation';
+      case 'WAITLISTED': return 'Waitlisted';
+      default: return status;
     }
   };
 
@@ -608,27 +688,49 @@ export default function PatientDashboard({ user }) {
                       fontWeight: 600,
                       ...getStatusStyle(apt.status)
                     }}>
-                      {apt.status}
+                      {getStatusLabel(apt.status)}
                     </span>
-                    {apt.status !== 'CANCELLED' && apt.status !== 'COMPLETED' && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCancelAppointment(apt.id || apt.appointmentId);
-                        }}
-                        style={{
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          color: '#ef4444',
-                          border: '1px solid rgba(239, 68, 68, 0.3)',
-                          padding: '0.375rem 0.75rem',
-                          borderRadius: '8px',
-                          fontSize: '0.8rem',
-                          fontWeight: 600,
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Cancel
-                      </button>
+                    {apt.status !== 'CANCELLED' && apt.status !== 'COMPLETED' && apt.status !== 'CHECKED_IN' && (
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        {(apt.status === 'CONFIRMED' || apt.status === 'RESCHEDULED') && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCheckIn(apt.id || apt.appointmentId);
+                            }}
+                            style={{
+                              background: 'rgba(16, 185, 129, 0.1)',
+                              color: '#10b981',
+                              border: '1px solid rgba(16, 185, 129, 0.3)',
+                              padding: '0.375rem 0.75rem',
+                              borderRadius: '8px',
+                              fontSize: '0.8rem',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Check In
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCancelAppointment(apt.id || apt.appointmentId);
+                          }}
+                          style={{
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            color: '#ef4444',
+                            border: '1px solid rgba(239, 68, 68, 0.3)',
+                            padding: '0.375rem 0.75rem',
+                            borderRadius: '8px',
+                            fontSize: '0.8rem',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -924,9 +1026,11 @@ export default function PatientDashboard({ user }) {
                   onChange={(e) => {
                     const selectedDoctorId = e.target.value;
                     console.log('Doctor selected:', selectedDoctorId);
-                    setBookingForm({ ...bookingForm, doctorId: selectedDoctorId });
+                    setBookingForm({ ...bookingForm, doctorId: selectedDoctorId, timeSlot: '' });
                     setPreviewSlot(null);
+                    setAvailableSlots([]);
                     if (bookingForm.date) {
+                      fetchAvailableSlots(selectedDoctorId, bookingForm.date);
                       previewAppointmentSlot(selectedDoctorId, bookingForm.date);
                     }
                   }}
@@ -958,8 +1062,11 @@ export default function PatientDashboard({ user }) {
                   onChange={(e) => {
                     const selectedDate = e.target.value;
                     console.log('Date selected:', selectedDate);
-                    setBookingForm({ ...bookingForm, date: selectedDate });
+                    setBookingForm({ ...bookingForm, date: selectedDate, timeSlot: '' });
+                    setPreviewSlot(null);
+                    setAvailableSlots([]);
                     if (bookingForm.doctorId) {
+                      fetchAvailableSlots(bookingForm.doctorId, selectedDate);
                       previewAppointmentSlot(bookingForm.doctorId, selectedDate);
                     }
                   }}
@@ -975,6 +1082,43 @@ export default function PatientDashboard({ user }) {
                     outline: 'none'
                   }}
                 />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Select Time Slot</label>
+                {bookingForm.doctorId && bookingForm.date ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
+                    {availableSlots.length > 0 ? availableSlots.map((slot) => (
+                      <button
+                        key={slot}
+                        onClick={() => setBookingForm({ ...bookingForm, timeSlot: slot })}
+                        style={{
+                         padding: '0.75rem',
+                          background: bookingForm.timeSlot === slot 
+                            ? 'linear-gradient(135deg, #0ea5e9, #0284c7)' 
+                            : '#f1f5f9',
+                          color: bookingForm.timeSlot === slot ? '#fff' : '#0f172a',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          fontWeight: 600,
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {slot}
+                      </button>
+                    )) : (
+                      <p style={{ fontSize: '0.85rem', color: '#64748b', gridColumn: '1 / -1' }}>
+                        Loading available slots...
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                    Select doctor and date first
+                  </p>
+                )}
               </div>
 
               {previewSlot && (
@@ -1057,6 +1201,140 @@ export default function PatientDashboard({ user }) {
                 Book Appointment
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modal */}
+      {showPaymentModal && pendingAppointment && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '16px',
+            padding: '2rem',
+            width: '100%',
+            maxWidth: '450px',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0f172a' }}>Complete Payment</h2>
+              <button
+                onClick={() => {
+                  setShowPaymentModal(false);
+                  setPendingAppointment(null);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '1.5rem',
+                  color: '#64748b'
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem', padding: '1rem', background: '#f1f5f9', borderRadius: '10px' }}>
+              <p style={{ fontSize: '0.9rem', color: '#64748b', marginBottom: '0.5rem' }}>Appointment Details:</p>
+              <p style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>{pendingAppointment.doctorName}</p>
+              <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                {pendingAppointment.scheduledDate || pendingAppointment.preferredDate} • {pendingAppointment.timeSlot}
+              </p>
+              <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                Queue Number: #{pendingAppointment.queuePosition || pendingAppointment.queueNumber || 'N/A'}
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <p style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', textAlign: 'center' }}>
+                Total: ${pendingAppointment.totalAmount || 100}
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>Select Payment Method:</label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  onClick={() => setPaymentMethod('card')}
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem',
+                    background: paymentMethod === 'card' ? 'linear-gradient(135deg, #0ea5e9, #0284c7)' : '#f1f5f9',
+                    color: paymentMethod === 'card' ? '#fff' : '#0f172a',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  💳 Card
+                </button>
+                <button
+                  onClick={() => setPaymentMethod('upi')}
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem',
+                    background: paymentMethod === 'upi' ? 'linear-gradient(135deg, #0ea5e9, #0284c7)' : '#f1f5f9',
+                    color: paymentMethod === 'upi' ? '#fff' : '#0f172a',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  📱 UPI
+                </button>
+                <button
+                  onClick={() => setPaymentMethod('cash')}
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem',
+                    background: paymentMethod === 'cash' ? 'linear-gradient(135deg, #0ea5e9, #0284c7)' : '#f1f5f9',
+                    color: paymentMethod === 'cash' ? '#fff' : '#0f172a',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  💵 Cash
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={handleConfirmPayment}
+              style={{
+                width: '100%',
+                background: 'linear-gradient(135deg, #10b981, #059669)',
+                color: '#fff',
+                padding: '0.875rem 2rem',
+                borderRadius: '10px',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '0.95rem',
+                boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
+                transition: 'all 0.2s'
+              }}
+            >
+              Pay & Confirm Appointment
+            </button>
           </div>
         </div>
       )}
