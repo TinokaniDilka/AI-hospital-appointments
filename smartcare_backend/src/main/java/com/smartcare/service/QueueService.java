@@ -1,7 +1,6 @@
 package com.smartcare.service;
 
 import com.smartcare.model.Appointment;
-import com.smartcare.model.AppointmentStatus;
 import com.smartcare.model.Doctor;
 import com.smartcare.model.NotificationLog;
 import com.smartcare.model.QueueState;
@@ -32,8 +31,11 @@ public class QueueService {
 
     public QueueState getOrCreateQueueForDoctor(String doctorId, String date) {
         String queryDate = (date != null && !date.isEmpty()) ? date : LocalDate.now().toString();
+        log.info("Fetching queue for doctor: {}, date: {}", doctorId, queryDate);
+        
         Optional<QueueState> existing = queueStateRepository.findByDoctorIdAndDate(doctorId, queryDate);
         if (existing.isPresent()) {
+            log.info("Found existing queue state for doctor: {}", doctorId);
             return refreshQueueCalculations(existing.get());
         }
 
@@ -41,7 +43,22 @@ public class QueueService {
         String docName = docOpt.map(Doctor::getDoctorName).orElse("Doctor");
         String deptName = docOpt.map(Doctor::getDepartmentName).orElse("General");
 
-        List<Appointment> appointments = appointmentRepository.findByDoctorIdAndAppointmentDate(doctorId, queryDate);
+        // Fetch appointments by doctor and check for matching date (scheduledDate or preferredDate)
+        List<Appointment> allAppointments = appointmentRepository.findByDoctorId(doctorId);
+        log.info("Total appointments for doctor {}: {}", doctorId, allAppointments.size());
+        
+        List<Appointment> appointments = allAppointments.stream()
+                .filter(apt -> {
+                    boolean matches = queryDate.equals(apt.getScheduledDate()) || queryDate.equals(apt.getPreferredDate());
+                    if (matches) {
+                        log.info("Matched appointment: {} - preferredDate: {}, scheduledDate: {}, status: {}", 
+                            apt.getAppointmentId(), apt.getPreferredDate(), apt.getScheduledDate(), apt.getStatus());
+                    }
+                    return matches;
+                })
+                .toList();
+        
+        log.info("Matched appointments for date {}: {}", queryDate, appointments.size());
 
         QueueState queueState = QueueState.builder()
                 .doctorId(doctorId)
@@ -52,19 +69,27 @@ public class QueueService {
                 .items(new ArrayList<>())
                 .build();
 
+        int queueNumber = 1;
         for (Appointment apt : appointments) {
+            // Only include non-cancelled appointments
+            if ("CANCELLED".equals(apt.getStatus())) {
+                continue;
+            }
+            
             QueueState.QueueItem item = QueueState.QueueItem.builder()
                     .appointmentId(apt.getAppointmentId())
                     .patientId(apt.getPatientId())
                     .patientName(apt.getPatientName())
-                    .queueNumber(apt.getQueuePosition())
-                    .position(apt.getQueuePosition())
-                    .status(apt.getStatus() != null ? apt.getStatus().name() : "WAITING")
+                    .queueNumber(apt.getQueuePosition() != null ? apt.getQueuePosition() : queueNumber)
+                    .position(queueNumber)
+                    .status(apt.getStatus() != null ? apt.getStatus() : "WAITING")
                     .isPriority(apt.isPriority())
                     .build();
             queueState.getItems().add(item);
+            queueNumber++;
         }
 
+        log.info("Queue items created: {}", queueState.getItems().size());
         return refreshQueueCalculations(queueStateRepository.save(queueState));
     }
 
@@ -77,10 +102,14 @@ public class QueueService {
             boolean bActive = isWaitingOrApproaching(b.getStatus());
 
             if (aActive && bActive) {
+                // Priority patients come first
                 if (a.isPriority() != b.isPriority()) {
                     return a.isPriority() ? -1 : 1;
                 }
+                // Then sort by queue number (appointment order)
+                return Integer.compare(a.getQueueNumber(), b.getQueueNumber());
             }
+            // Non-active items sorted by queue number
             return Integer.compare(a.getQueueNumber(), b.getQueueNumber());
         });
 
@@ -204,12 +233,7 @@ public class QueueService {
                 .filter(a -> a.getAppointmentId().equals(appointmentId))
                 .findFirst()
                 .ifPresent(apt -> {
-                    try {
-                        apt.setStatus(AppointmentStatus.valueOf(status));
-                    } catch (IllegalArgumentException e) {
-                        // Fallback for old string statuses
-                        apt.setStatus(AppointmentStatus.WAITING_FOR_SCHEDULING);
-                    }
+                    apt.setStatus(status);
                     appointmentRepository.save(apt);
                 });
     }
