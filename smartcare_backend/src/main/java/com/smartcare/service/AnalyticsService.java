@@ -96,9 +96,12 @@ public class AnalyticsService {
         Map<String, TrendData> trendMap = new LinkedHashMap<>();
 
         for (Appointment apt : all) {
-            if (apt.getAppointmentDate() == null) continue;
+            if (apt.getScheduledDate() == null && apt.getPreferredDate() == null) continue;
 
-            LocalDate aptDate = LocalDate.parse(apt.getAppointmentDate(), formatter);
+            LocalDate aptDate = LocalDate.parse(
+                apt.getScheduledDate() != null ? apt.getScheduledDate() : apt.getPreferredDate(), 
+                formatter
+            );
             if (aptDate.isBefore(startDate) || aptDate.isAfter(endDate)) continue;
 
             String key;
